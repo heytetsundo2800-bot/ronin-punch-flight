@@ -10,6 +10,7 @@ export function toonGradient() {
   tex.magFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
+  tex.userData.shared = true;
   _grad = tex;
   return tex;
 }
@@ -19,7 +20,10 @@ export function toon(color, opts = {}) {
   const key = color + '|' + JSON.stringify(opts);
   if (!opts.unique && matCache.has(key)) return matCache.get(key);
   const m = new THREE.MeshToonMaterial({ color, gradientMap: toonGradient(), ...stripOpts(opts) });
-  if (!opts.unique) matCache.set(key, m);
+  if (!opts.unique) {
+    m.userData.shared = true;
+    matCache.set(key, m);
+  }
   return m;
 }
 function stripOpts(o) {
@@ -41,6 +45,7 @@ export function outlineMat(color = 0x14161c, width = 0.022) {
       .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normalize(normal) * uOutline;');
   };
   m.customProgramCacheKey = () => 'outline' + width;
+  m.userData.shared = true;
   outlineCache.set(key, m);
   return m;
 }
@@ -97,6 +102,7 @@ export function glowTex() {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
   });
+  _glow.userData.shared = true;
   return _glow;
 }
 let _shadow = null;
@@ -110,6 +116,7 @@ export function shadowTex() {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
   });
+  _shadow.userData.shared = true;
   return _shadow;
 }
 
@@ -140,5 +147,37 @@ export function sakuraTex() {
     ctx.fillStyle = '#ffef7a';
     ctx.fill();
   });
+  _sakura.userData.shared = true;
   return _sakura;
+}
+
+// 使い終わった物を GPU から消す（キャッシュしていて使い回す物＝userData.shared は残す）
+const TEX_KEYS = ['map', 'gradientMap', 'alphaMap', 'emissiveMap', 'normalMap', 'aoMap', 'lightMap', 'bumpMap', 'specularMap', 'envMap'];
+export function shareMark(o) {
+  if (o) o.userData.shared = true;
+  return o;
+}
+export function disposeDeep(root) {
+  if (!root) return;
+  const seen = new Set();
+  const tex = (t) => {
+    if (!t || !t.isTexture || seen.has(t) || t.userData.shared) return;
+    seen.add(t);
+    t.dispose();
+  };
+  root.traverse((o) => {
+    const g = o.geometry;
+    if (g && !seen.has(g) && !g.userData.shared) {
+      seen.add(g);
+      g.dispose();
+    }
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      if (seen.has(m)) continue;
+      seen.add(m);
+      for (const k of TEX_KEYS) tex(m[k]);
+      if (m.uniforms) for (const k of Object.keys(m.uniforms)) tex(m.uniforms[k] && m.uniforms[k].value);
+      if (!m.userData.shared) m.dispose();
+    }
+  });
 }

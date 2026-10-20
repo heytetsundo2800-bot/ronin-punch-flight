@@ -26,6 +26,20 @@ export class Brain {
     this.reserve = null;
     this.noise = new THREE.Vector3();
     this.noiseT = 0;
+    this.ignore = new Map(); // 取れない物 → いつまで無視するか
+    this.holdOffT = 0;
+  }
+  ignored(o) {
+    const t = this.ignore.get(o);
+    if (t == null) return false;
+    if (t < this.m.time) {
+      this.ignore.delete(o);
+      return false;
+    }
+    return true;
+  }
+  ignoreSet(o, sec) {
+    this.ignore.set(o, this.m.time + sec);
   }
 
   get diff() {
@@ -122,7 +136,7 @@ export class Brain {
     let best = null, bd = 1e9;
     const res = M.aiReserve;
     for (const it of mode.field.items) {
-      if (it.state !== 'field') continue;
+      if (it.state !== 'field' || this.ignored(it)) continue;
       const owner = res.get(it);
       if (owner && owner !== this && owner.p.alive) continue;
       let d = it.pos.distanceTo(p.pos);
@@ -194,7 +208,7 @@ export class Brain {
     if (open) {
       let best = null, bd = 30;
       for (const b of mode.balls) {
-        if (b.state !== 'field') continue;
+        if (b.state !== 'field' || this.ignored(b)) continue;
         const d = b.pos.distanceTo(p.pos);
         if (d < bd) {
           bd = d;
@@ -227,11 +241,12 @@ export class Brain {
     // 敵の運び屋
     for (const e of enemies) if (e.carry.balls.length >= 2 && e.pos.distanceTo(p.pos) < 35) return { kind: 'fight', obj: e, arrive: 2 };
     // ダルマをたおしに行く
-    if (this.role !== 'collector' && !hpLow && carry < 2) return { kind: 'guardian', obj: M.guardians[foe], pos: M.guardians[foe].pos, arrive: 5 };
+    // （もう倒れていてゴールが開いているなら、たたかずにボールを取りに行く）
+    if (!open && this.role !== 'collector' && !hpLow && carry < 2) return { kind: 'guardian', obj: M.guardians[foe], pos: M.guardians[foe].pos, arrive: 5 };
     // ボールを集める
     let best = null, bd = 1e9;
     for (const b of mode.balls) {
-      if (b.state !== 'field') continue;
+      if (b.state !== 'field' || this.ignored(b)) continue;
       const d = b.pos.distanceTo(p.pos);
       if (d < bd) {
         bd = d;
@@ -411,10 +426,19 @@ export class Brain {
     this.lastDist = dist;
     if (this.stuckT > 1.2) {
       this.stuckT = 0;
-      p.intent.events.push({ type: 'flick', dir: { x: Math.random() < 0.5 ? -1 : 1, y: -0.7 } });
-      this.avoid = new THREE.Vector3(rand(-1, 1), 0.8, rand(-1, 1)).normalize();
-      this.avoidT = 0.8;
+      // 同じ物をねらって2回引っかかったら、しばらくあきらめる（島の下のボールなど）
+      this.stuckN = (this.stuckN || 0) + 1;
+      if (g.obj && this.stuckN >= 2) {
+        this.ignoreSet(g.obj, 7);
+        this.stuckN = 0;
+      }
+      // 上へぬけてから、別の向きへ
+      p.intent.events.push({ type: 'flick', dir: { x: 0, y: -1 } });
+      this.avoid = new THREE.Vector3(rand(-1, 1), 1.3, rand(-1, 1)).normalize();
+      this.avoidT = 1.0;
+      this.holdOffT = 0.2;
     }
+    if (this.holdOffT > 0) this.holdOffT -= dt;
     // ぶれ（難しさで変わる）
     if (this.noiseT <= 0) {
       this.noiseT = rand(0.4, 1.0);
@@ -431,7 +455,7 @@ export class Brain {
     I.stickY = clamp(ep * k, -1, 1);
     // 大きく向きがちがうときは、止まって向きを変えてから飛ぶ
     const facing = Math.abs(ey) < 1.2 && Math.abs(ep) < 1.0;
-    I.hold = facing && dist > (g.arrive || 1) * 0.8;
+    I.hold = facing && dist > (g.arrive || 1) * 0.8 && !(this.holdOffT > 0);
     // 遠いときはブースト
     if (facing && Math.abs(ey) < 0.25 && dist > 30 && p.boost >= 3 && this.dashCd <= 0 && p.state !== 'dash') {
       p.intent.events.push({ type: 'tap' });

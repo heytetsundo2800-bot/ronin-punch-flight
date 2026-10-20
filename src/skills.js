@@ -127,6 +127,7 @@ export class Skills {
           t.stunT = Math.max(t.stunT, 2.6);
           t.dash = null;
           t.lock = null;
+          if (t.remote && M.netHit) M.netHit(t, { s: 2.6, ul: 1 });
           M.fx.hearts && M.fx.hearts(t, 2.6);
         }
       }
@@ -363,6 +364,7 @@ export class Skills {
           M.combat.damage(p, t, 115 * p.def.atk, { elem: true, kind: 'ks', dir: _v2.clone(), knock: 4, melee: true });
           // 相手をいっしょに運ぶ
           if (t.vel) t.vel.copy(p.vel).multiplyScalar(0.9);
+          if (t.remote && M.netHit) M.netHit(t, { vs: t.vel.clone() });
         }
         if (a.t >= a.dur) {
           for (const t of M.combat.targetsFor(p)) {

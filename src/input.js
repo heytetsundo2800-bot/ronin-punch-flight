@@ -4,13 +4,13 @@
 import { MOVE } from './config.js';
 import { clamp } from './util.js';
 
-const TAP_TIME = 0.24; // これより短く離したらタップ
+const TAP_TIME = 0.3; // これより短く、指を動かさずに離したらタップ（少し長めに押してもブーストになる）
 const TAP_SLOP = 14; // タップとみなす指のずれ(px)
 const HOLD_DELAY = 0.19; // これより長く押すと飛びはじめる（それより前に指が動いたら、その場で向きを変える）
 const FLICK_TIME = 0.3;
 const FLICK_DIST = 30;
 const FLICK_SPEED = 0.32; // px/ms
-const DOUBLE_FLICK = 0.45; // 上→下 の連続フリックの受付
+const DOUBLE_FLICK = 0.52; // 上→下 の連続フリックの受付
 
 export class Input {
   constructor(surface, ringEl, knobEl) {

@@ -13,6 +13,7 @@ import { FollowCam } from './camera.js';
 import { Hud } from './hud.js';
 import { sound } from './audio.js';
 import { shuffle, el, clamp, rand, vibrate } from './util.js';
+import { disposeDeep } from './gfx.js';
 
 const _v = new THREE.Vector3();
 
@@ -59,6 +60,68 @@ export class Match {
       while (list.length < 4) list.push(ids[Math.floor(Math.random() * ids.length)]);
       return list;
     };
+    if (opts.roster) {
+      this.buildFromRoster(opts);
+    } else this.buildRandom(opts, roster, myTeam);
+    this.player = this.punchers.find((p) => p.isPlayer) || this.punchers[0];
+    this.punchers.forEach((p, i) => (p.netId = i));
+    this.combat = new Combat(this);
+    this.skills = new Skills(this);
+    this.mode = createMode(opts.mode, this);
+    // CPU（オンライン対戦の、ほかの端末の人には付けない）
+    if (!opts.noBrains) {
+      for (let team = 0; team < 2; team++) {
+        const members = this.punchers.filter((p) => p.team === team);
+        const roles = assignRoles(members);
+        members.forEach((p, i) => {
+          if (p.cpu) p.brain = new Brain(p, this, roles[i]);
+        });
+      }
+    }
+    // スタート位置
+    for (const p of this.punchers) this.placeAtBase(p);
+    this.fx = new FX(this, app.fxLayer);
+    this.fxNoBoost = (p) => this.fx.noBoost(p);
+    this.cam = new FollowCam(this.camera, this.world);
+    this.hud = new Hud(app.hudRoot, this, app.portraits);
+    this.input = app.input;
+    this.input.reset();
+    this.bindHud();
+    this.input.isMoving = () => {
+      const s = this.player.state;
+      return s === 'fly' || s === 'cruise' || s === 'dash' || s === 'roll';
+    };
+    this.resize(app.viewW, app.viewH);
+    // 開始の演出：上からぐるっと見せる
+    this.introCam = { t: 0 };
+    sound.playBgm('battle');
+    this.announce(MODES[opts.mode].name, -1, true);
+  }
+
+  // オンライン対戦：決まった組み合わせで人を出す
+  buildFromRoster(opts) {
+    for (const r of opts.roster) {
+      const def = PUNCHERS[r.char] || PUNCHERS.tora;
+      const isPlayer = r.idx === opts.meIdx;
+      const p = new Puncher(this, def, r.team, r.slot, isPlayer);
+      p.human = !!r.human;
+      p.cpu = !r.human;
+      p.peer = r.human || null;
+      p.displayName = String(r.name || def.short || def.name).slice(0, 10);
+      if (r.deck && r.deck.length === 4 && r.deck.every((id) => OMAMORI[id])) {
+        p.omamori = r.deck.slice();
+        p.omCd = p.omamori.map(() => 0);
+        p.elem = OMAMORI[p.omamori[0]].elem;
+        p.omLv = (r.lv || [1, 1, 1, 1]).slice(0, 4);
+      } else {
+        const lv = { easy: 1, normal: 2, hard: 3 }[opts.difficulty || 'normal'] || 1;
+        p.omLv = [lv, lv, lv, lv];
+      }
+      this.punchers.push(p);
+    }
+  }
+
+  buildRandom(opts, roster, myTeam) {
     const teams = opts.solo ? [[opts.char], []] : [roster(myTeam, true), roster(1 - myTeam, false)];
     // フレンドがいたら、その人の名前とキャラでCPUを出す（味方から順に）
     const friendSlots = [];
@@ -76,6 +139,8 @@ export class Match {
         const isPlayer = team === myTeam && slot === 0;
         const def = PUNCHERS[id];
         const p = new Puncher(this, def, team, slot, isPlayer);
+        p.human = isPlayer;
+        p.cpu = !isPlayer;
         if (isPlayer && opts.deck) {
           p.omamori = opts.deck.slice();
           p.omCd = p.omamori.map(() => 0);
@@ -98,36 +163,6 @@ export class Match {
         p.friend = true;
       }
     }
-    this.player = this.punchers[0];
-    this.combat = new Combat(this);
-    this.skills = new Skills(this);
-    this.mode = createMode(opts.mode, this);
-    // CPU
-    for (let team = 0; team < 2; team++) {
-      const members = this.punchers.filter((p) => p.team === team);
-      const roles = assignRoles(members);
-      members.forEach((p, i) => {
-        if (!p.isPlayer) p.brain = new Brain(p, this, roles[i]);
-      });
-    }
-    // スタート位置
-    for (const p of this.punchers) this.placeAtBase(p);
-    this.fx = new FX(this, app.fxLayer);
-    this.fxNoBoost = (p) => this.fx.noBoost(p);
-    this.cam = new FollowCam(this.camera, this.world);
-    this.hud = new Hud(app.hudRoot, this, app.portraits);
-    this.input = app.input;
-    this.input.reset();
-    this.bindHud();
-    this.input.isMoving = () => {
-      const s = this.player.state;
-      return s === 'fly' || s === 'cruise' || s === 'dash' || s === 'roll';
-    };
-    this.resize(app.viewW, app.viewH);
-    // 開始の演出：上からぐるっと見せる
-    this.introCam = { t: 0 };
-    sound.playBgm('battle');
-    this.announce(MODES[opts.mode].name, -1, true);
   }
 
   omOf(id) {
@@ -138,6 +173,9 @@ export class Match {
   addPuncher(id, team, slot, role) {
     const p = new Puncher(this, PUNCHERS[id], team, slot, false);
     p.displayName = PUNCHERS[id].short || PUNCHERS[id].name;
+    p.cpu = true;
+    p.human = false;
+    p.netId = this.punchers.length;
     this.punchers.push(p);
     if (role) p.brain = new Brain(p, this, role);
     this.placeAtBase(p);
@@ -201,6 +239,8 @@ export class Match {
     H.menuBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // 試合が終わったあと（FINISH! のあいだ）はメニューを出さない
+      if (this.phase === 'finish' || this.phase === 'result') return;
       this.app.pause();
     });
     // 預ける（長押し）
@@ -254,15 +294,7 @@ export class Match {
         if (this.noTimer) this.timeLeft = Math.max(this.timeLeft, 61);
         else if (!this.overtime) this.timeLeft = Math.max(0, this.timeLeft - dt);
         else this.mode.overtime = (this.mode.overtime || 0) + dt;
-        if (this.timeLeft <= 30 && !this.hurried) {
-          this.hurried = true;
-          sound.playBgm('final');
-          this.announce('のこり30秒！', -1, true);
-        }
-        if (this.timeLeft <= 5 && Math.ceil(this.timeLeft) !== this._lastCount && this.timeLeft > 0) {
-          this._lastCount = Math.ceil(this.timeLeft);
-          sound.play('count');
-        }
+        this.timerCues();
         if (this.timeLeft <= 0) {
           if (this.mode.timeUp()) this.finish('タイムアップ！');
           else if (!this.overtime) {
@@ -291,7 +323,7 @@ export class Match {
           }
         }
       }
-      for (const p of this.punchers) p.update(dt);
+      for (const p of this.punchers) this.stepPuncher(p, dt);
       this.skills.update(dt);
       this.combat.update(dt);
       this.mode.update(dt, this.time);
@@ -302,6 +334,23 @@ export class Match {
     this.fx.update(dt, this.camera);
     this.stage.update(dt, this.time, this.camera.position);
     if (this.phase !== 'result') this.hud.update(dt, this.camera);
+  }
+
+  // のこり時間の合図（30秒・最後の5秒）
+  timerCues() {
+    if (this.noTimer) return;
+    if (this.timeLeft <= 30 && !this.hurried) {
+      this.hurried = true;
+      sound.playBgm('final');
+      this.announce('のこり30秒！', -1, true);
+    }
+    if (this.timeLeft <= 5 && Math.ceil(this.timeLeft) !== this._lastCount && this.timeLeft > 0) {
+      this._lastCount = Math.ceil(this.timeLeft);
+      sound.play('count');
+    }
+  }
+  stepPuncher(p, dt) {
+    p.update(dt);
   }
 
   killCamTarget(P) {
@@ -370,6 +419,11 @@ export class Match {
     // アシスト
     for (const p of this.punchers) if (p !== killer && p.team !== victim.team && p.lastAssist === victim && this.time - p.lastAssistT < 6) p.stats.assist++;
     for (const p of this.punchers) if (p.lock === victim) p.lock = null;
+    this.koFeedback(victim, killer);
+  }
+  // 倒した・倒されたの見せ方（それぞれの画面の「自分」から見て決める）
+  koFeedback(victim, killer) {
+    if (!victim) return;
     this.fx.ko(victim);
     if (victim.isPlayer) {
       sound.play('ko');
@@ -392,11 +446,28 @@ export class Match {
     if (p.model.userData.glasses) p.model.userData.glasses.visible = true;
     p.model.rotation.set(0, p.yaw, 0);
     p.killedBy = null;
+    p.life = ((p.life || 0) + 1) & 255;
+    this.respawnFeedback(p);
+  }
+  respawnFeedback(p) {
+    if (!p) return;
     this.fx.respawn(p);
     if (p.isPlayer) {
       sound.play('respawn');
       this.cam.first = true;
     }
+  }
+  // 当たったときの画面のゆれ・止まり（自分がかかわるときだけ）
+  hitFeedback(t, src, heavy, melee, stun) {
+    if (!t) return;
+    if (heavy && (t.isPlayer || (src && src.isPlayer))) this.shake(t.isPlayer ? 0.35 : 0.2, 0.18);
+    if (src && (src.isPlayer || t.isPlayer) && (melee || heavy)) this.hitStop(heavy ? COMBAT.hitStop * 1.6 : COMBAT.hitStop);
+  }
+  justFeedback(t) {
+    if (!t) return;
+    this.fx.just && this.fx.just(t);
+    this.sfx('just', t);
+    if (t.isPlayer) this.slowmo(0.35, 0.35);
   }
 
   lockCandidates(p) {
@@ -496,6 +567,7 @@ export class Match {
       me: this.player,
       punchers: this.punchers,
       char: this.opts.char,
+      online: !!this.online,
     });
   }
 
@@ -503,14 +575,13 @@ export class Match {
     this.running = false;
     this.input.enabled = false;
     this.input.reset();
+    // 場面にある物をまとめて GPU から消す（取りのぞく前に。使い回す物は残す）
+    disposeDeep(this.scene);
     this.combat.clear();
     this.skills.clear();
     this.fx.clear();
     this.mode.dispose();
     this.stage.dispose();
-    this.scene.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-    });
     this.app.hudRoot.innerHTML = '';
   }
 }

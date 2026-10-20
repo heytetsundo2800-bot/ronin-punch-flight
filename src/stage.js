@@ -405,6 +405,7 @@ function cloudTex() {
       ctx.fill();
     }
   });
+  _cloudTex.userData.shared = true;
   return _cloudTex;
 }
 

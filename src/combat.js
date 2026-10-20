@@ -176,7 +176,7 @@ export class Combat {
     }
     if (src && src.buffs && src.buffs.atkT > 0) dmg *= 1 + src.buffs.atk;
     if (src && src.buffs && src.buffs.ikemen > 0) dmg *= 1.5;
-    if (src && src.isPlayer === false && M.diff) dmg *= M.diff.dmg;
+    if (src && src.cpu && M.diff) dmg *= M.diff.dmg;
     if (t.buffs.big > 0) dmg *= 0.5;
     dmg = Math.round(dmg);
     // バリア
@@ -199,27 +199,35 @@ export class Combat {
     }
     t.addSP(dmg * COMBAT.specialPerDamage * 0.35);
     // ディスクの溜め中ならキャンセル
+    let cc = null;
     if (t.charge && (opts.cancel || opts.kind === 'disk' || opts.kind === 'ks' || opts.kind === 'special' || opts.heavy)) {
       M.fx.chargeBreak && M.fx.chargeBreak(t);
       t.omCd[t.charge.slot] = Math.max(t.omCd[t.charge.slot] * 0.5, 2);
+      cc = { slot: t.charge.slot, cd: t.omCd[t.charge.slot] };
       t.charge = null;
     }
     // ひるみ・ふっとび
     const big = t.buffs.big > 0;
+    let kv = null, stunV = 0, hurtV = 0;
     if (opts.knock && opts.dir && !big) {
       t.vel.addScaledVector(opts.dir, opts.knock);
+      kv = opts.dir.clone().multiplyScalar(opts.knock);
     }
     if (opts.stun && !big) {
       t.stunT = Math.max(t.stunT, opts.stun);
       t.dash = null;
       if (t.state === 'dash' || t.state === 'cruise' || t.state === 'fly') t.state = 'hover';
+      stunV = opts.stun;
     } else if (!big && opts.kind !== 'dot') {
-      t.hurtT = Math.max(t.hurtT, opts.heavy ? 0.3 : 0.14);
+      hurtV = opts.heavy ? 0.3 : 0.14;
+      t.hurtT = Math.max(t.hurtT, hurtV);
     }
+    // オンライン対戦：ほかの端末で動かしている人には、ふっとび・ひるみを知らせる
+    if (t.remote && M.netHit) M.netHit(t, { k: kv, s: stunV, h: hurtV, cc });
     if ((opts.heavy || opts.stun > 0.3) && !big) M.mode.onKnock && M.mode.onKnock(t, src);
     M.fx.hit && M.fx.hit(t, src, dmg, { weak, heavy: opts.heavy, kind: opts.kind });
     M.sfx(opts.heavy ? 'hitHeavy' : 'hit', t, src);
-    if (src && (src.isPlayer || t.isPlayer) && (opts.melee || opts.heavy)) M.hitStop(opts.heavy ? COMBAT.hitStop * 1.6 : COMBAT.hitStop);
+    M.hitFeedback(t, src, !!opts.heavy, !!opts.melee, opts.stun || 0);
     if (t.hp <= 0) {
       t.hp = 0;
       M.ko(t, src);
@@ -232,14 +240,13 @@ export class Combat {
     t.justT = 0;
     t.invuln = Math.max(t.invuln, 0.35);
     t.addSP(0.06);
-    M.fx.just && M.fx.just(t);
-    M.sfx('just', t);
+    M.justFeedback(t);
     if (src && src.stunT != null && opts.melee) {
       src.stunT = Math.max(src.stunT, 0.8);
       src.atk.phase = -1;
       src.atk.pending = null;
+      if (src.remote && M.netHit) M.netHit(src, { s: 0.8, ap: 1 });
     }
-    if (t.isPlayer) M.slowmo(0.35, 0.35);
   }
 
   heal(t, v) {
@@ -249,6 +256,7 @@ export class Combat {
   // ===== 飛び道具 =====
   spawnProjectile(o) {
     o.age = 0;
+    o.nid = this.nid = ((this.nid || 0) + 1) & 0xffff;
     o.hitSet = new Set();
     o.mesh = this.match.fx.projectileMesh ? this.match.fx.projectileMesh(o) : null;
     this.projectiles.push(o);
@@ -257,6 +265,7 @@ export class Combat {
 
   addArea(o) {
     o.age = 0;
+    o.nid = this.nid = ((this.nid || 0) + 1) & 0xffff;
     o.mesh = this.match.fx.areaMesh ? this.match.fx.areaMesh(o) : null;
     this.areas.push(o);
     return o;
@@ -345,7 +354,7 @@ export class Combat {
       a.age += dt;
       if (a.update) a.update(a, dt);
       if (a.age >= a.life || a.dead) {
-        if (a.mesh) a.mesh.parent && a.mesh.parent.remove(a.mesh);
+        if (a.mesh) this.match.fx.disposeArea ? this.match.fx.disposeArea(a.mesh) : a.mesh.parent && a.mesh.parent.remove(a.mesh);
         if (a.onEnd) a.onEnd(a);
         this.areas.splice(i, 1);
       }

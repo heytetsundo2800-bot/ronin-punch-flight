@@ -9,7 +9,7 @@ import { saveSave } from './save.js';
 const STEPS = [
   { id: 'dash', label: '移動', msg: 'まずは加速の基本。<em>タップ</em>でブーストダッシュしよう！<br><small>黄色いゲージを1つ使う。時間で回復するよ</small>', need: 3, hint: 'center' },
   { id: 'fly', label: '移動', msg: '<em>長押し</em>で飛び続けよう！<br>押したまま<em>指をスライド</em>すると旋回できる', need: 60, unit: 'm', hint: 'hold' },
-  { id: 'look', label: '移動', msg: '止まっているときに<em>すぐ指をスライド</em>すると、その場で向きを変えられる', need: 180, unit: '°', hint: 'swipe' },
+  { id: 'look', label: '移動', msg: '止まっているときは<em>指をすべらせたまま</em>（はなさずに）動かすと、その場で向きを変えられる<br><small>すばやく動かして離すとステップ（回避）になるよ</small>', need: 180, unit: '°', hint: 'swipe' },
   { id: 'brake', label: '移動', msg: '飛んでいるときに<em>下フリック</em>で急ブレーキ！<br><small>（止まっているときはバックステップ）</small>', need: 2, hint: 'down' },
   { id: 'step', label: '移動', msg: '止まっているときに<em>横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', need: 2, hint: 'side' },
   { id: 'uturn', label: '移動', msg: '<em>上→下の連続フリック</em>で、くるっと真後ろを向こう！', need: 1, hint: 'updown' },

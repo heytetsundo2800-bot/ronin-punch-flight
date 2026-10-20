@@ -37,6 +37,8 @@ export class Hud {
     this.mapWrap.appendChild(this.map);
     this.top.appendChild(this.mapWrap);
     root.appendChild(this.top);
+    // 赤チームの人は、自分のチームの点を左に出す
+    if (match.player && match.player.team === 1) this.scoreRow.classList.add('flip');
     this.timerEl = this.scoreRow.querySelector('.timer');
     this.sc = [this.scoreRow.querySelector('.d0 span'), this.scoreRow.querySelector('.d1 span')];
     // 左右：味方と敵

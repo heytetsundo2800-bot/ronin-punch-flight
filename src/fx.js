@@ -1,6 +1,6 @@
 // えフェクト：火花・数字・波紋・光の筋・つぶ
 import * as THREE from 'three';
-import { glowTex, toon, addOutline, canvasTex, sakuraTex } from './gfx.js';
+import { glowTex, toon, addOutline, canvasTex, sakuraTex, shareMark, disposeDeep } from './gfx.js';
 import { TEAM, ELEM } from './config.js';
 import { KIND_COLOR } from './characters.js';
 import { rand, clamp, el } from './util.js';
@@ -180,11 +180,46 @@ class Trail {
   dispose(scene) {
     scene.remove(this.mesh);
     this.mesh.geometry.dispose();
+    this.mat.dispose();
   }
 }
 
 // ===== 波紋の輪 =====
-const ringGeo = new THREE.RingGeometry(0.85, 1, 48);
+const ringGeo = shareMark(new THREE.RingGeometry(0.85, 1, 48));
+// 飛び道具の形と色は使い回す（1発ごとに作るとGPUのメモリがふえていく）
+const PC = {};
+const pcache = (key, make) => PC[key] || (PC[key] = shareMark(make()));
+function projTemplate(k) {
+  const m = new THREE.Group();
+  if (k === 'akahon') {
+    const book = new THREE.Mesh(pcache('akG', () => new THREE.BoxGeometry(0.9, 1.2, 0.35)), toon(0xd8202a));
+    addOutline(book, 0x3a0a0a, 0.05);
+    book.rotation.x = Math.PI / 2;
+    m.add(book);
+    const glow = new THREE.Sprite(pcache('akS', () => new THREE.SpriteMaterial({ map: glowTex(), color: 0xff5a3d, transparent: true, opacity: 0.7, depthWrite: false })));
+    glow.scale.set(3, 3, 1);
+    m.add(glow);
+  } else if (k === 'tangocho') {
+    for (let i = 0; i < 3; i++) {
+      const c = new THREE.Mesh(pcache('tgG', () => new THREE.BoxGeometry(1.2, 0.05, 0.7)), toon(i === 1 ? 0x38d16a : 0xffffff));
+      c.rotation.y = (i / 3) * Math.PI;
+      c.position.y = i * 0.06;
+      m.add(c);
+    }
+    const ring = new THREE.Mesh(pcache('tgR', () => new THREE.TorusGeometry(0.2, 0.04, 6, 12)), toon(0xc0c0c0));
+    ring.rotation.x = Math.PI / 2;
+    m.add(ring);
+  } else if (k === 'pencil') {
+    const body = new THREE.Mesh(pcache('pnB', () => new THREE.CylinderGeometry(0.16, 0.16, 1.6, 6)), toon(0xffc93c));
+    body.rotation.x = Math.PI / 2;
+    m.add(body);
+    const tip = new THREE.Mesh(pcache('pnT', () => new THREE.ConeGeometry(0.16, 0.45, 6)), toon(0xf2d0a0));
+    tip.rotation.x = Math.PI / 2;
+    tip.position.z = 1.0;
+    m.add(tip);
+  }
+  return m;
+}
 
 export class FX {
   constructor(match, layer) {
@@ -430,44 +465,19 @@ export class FX {
     let m;
     const k = o.kind;
     if (k === 'ink') {
-      m = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), new THREE.MeshBasicMaterial({ color: 0x1b2a4a }));
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[o.owner.team].hex, transparent: true, opacity: 0.8, depthWrite: false }));
+      const team = o.owner && o.owner.team != null ? o.owner.team : 0;
+      m = new THREE.Mesh(pcache('inkG', () => new THREE.SphereGeometry(0.32, 10, 8)), pcache('inkM', () => new THREE.MeshBasicMaterial({ color: 0x1b2a4a })));
+      const glow = new THREE.Sprite(pcache('inkS' + team, () => new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[team].hex, transparent: true, opacity: 0.8, depthWrite: false })));
       glow.scale.set(1.6, 1.6, 1);
       m.add(glow);
-    } else if (k === 'akahon') {
-      m = new THREE.Group();
-      const book = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.2, 0.35), toon(0xd8202a));
-      addOutline(book, 0x3a0a0a, 0.05);
-      book.rotation.x = Math.PI / 2;
-      m.add(book);
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0xff5a3d, transparent: true, opacity: 0.7, depthWrite: false }));
-      glow.scale.set(3, 3, 1);
-      m.add(glow);
-    } else if (k === 'tangocho') {
-      m = new THREE.Group();
-      for (let i = 0; i < 3; i++) {
-        const c = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.05, 0.7), toon(i === 1 ? 0x38d16a : 0xffffff));
-        c.rotation.y = (i / 3) * Math.PI;
-        c.position.y = i * 0.06;
-        m.add(c);
-      }
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.04, 6, 12), toon(0xc0c0c0));
-      ring.rotation.x = Math.PI / 2;
-      m.add(ring);
-    } else if (k === 'pencil') {
-      m = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.6, 6), toon(0xffc93c));
-      body.rotation.x = Math.PI / 2;
-      m.add(body);
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.45, 6), toon(0xf2d0a0));
-      tip.rotation.x = Math.PI / 2;
-      tip.position.z = 1.0;
-      m.add(tip);
+    } else if (k === 'akahon' || k === 'tangocho' || k === 'pencil') {
+      m = pcache('tpl_' + k, () => projTemplate(k)).clone();
     } else if (k === 'guardianShot') {
-      m = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[o.team].hex, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending }));
+      const team = o.team || 0;
+      m = new THREE.Sprite(pcache('gsS' + team, () => new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[team].hex, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending })));
       m.scale.set(2.6, 2.6, 1);
     } else {
-      m = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      m = new THREE.Mesh(pcache('defG', () => new THREE.SphereGeometry(0.4, 8, 6)), pcache('defM', () => new THREE.MeshBasicMaterial({ color: 0xffffff })));
     }
     m.position.copy(o.pos);
     this.scene.add(m);
@@ -507,5 +517,13 @@ export class FX {
     for (const n of this.nums) n.el.remove();
     this.nums.length = 0;
     this.scene.remove(this.parts.points);
+    this.parts.geo.dispose();
+    this.parts.mat.dispose();
+  }
+  // 罠・結界の見た目を消す（形はその場で作ったもの）
+  disposeArea(mesh) {
+    if (!mesh) return;
+    if (mesh.parent) mesh.parent.remove(mesh);
+    disposeDeep(mesh);
   }
 }

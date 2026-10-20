@@ -1,6 +1,7 @@
 // キャラの顔アイコン・全身の絵を3Dモデルから作る
 import * as THREE from 'three';
 import { buildPuncher, poseModel } from './model.js';
+import { disposeDeep } from './gfx.js';
 import { PUNCHERS } from './characters.js';
 import { TEAM } from './config.js';
 
@@ -62,9 +63,7 @@ export class Portraits {
     R.setClearColor(prevC, prevA);
     rt.dispose();
     this.scene.remove(model);
-    model.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-    });
+    disposeDeep(model);
     // 上下を反転してキャンバスへ
     const c = document.createElement('canvas');
     c.width = w;

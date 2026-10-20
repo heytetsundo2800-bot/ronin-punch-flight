@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { TEAM, MATCH_TIME } from './config.js';
 import { buildDaruma } from './stage.js';
-import { toon, addOutline, glowTex, canvasTex } from './gfx.js';
+import { toon, addOutline, glowTex, canvasTex, shareMark } from './gfx.js';
 import { clamp, damp, rand, pick, TAU } from './util.js';
 
 const _v = new THREE.Vector3();
@@ -58,7 +58,7 @@ export class Guardian {
     U.halo.rotation.z += dt * 0.6;
     // 近くの敵をうつ
     this.fireCd -= dt;
-    if (this.mode && this.mode.guardianShoots(this) && this.fireCd <= 0) {
+    if (this.mode && !this.match.netClient && this.mode.guardianShoots(this) && this.fireCd <= 0) {
       let best = null, bd = 17;
       for (const p of this.match.punchers) {
         if (p.team === this.team || !p.alive) continue;
@@ -120,7 +120,7 @@ class SakuraField {
     this.q = new THREE.Quaternion();
     this.s = new THREE.Vector3();
   }
-  update(dt, t) {
+  update(dt, t, cosmetic = false) {
     const M = this.match;
     for (const it of this.items) {
       if (it.state === 'returning') {
@@ -146,7 +146,7 @@ class SakuraField {
         if (best) {
           _v.subVectors(best.pos, it.pos);
           if (bd < 1.6 + best.radius * 0.4) {
-            M.mode.pickup(best, it);
+            if (!cosmetic) M.mode.pickup(best, it);
           } else {
             it.pos.addScaledVector(_v.normalize(), Math.min(bd, 22 * dt));
           }
@@ -200,11 +200,14 @@ export class Scramble {
     this.depositT = new Map();
     for (const g of match.guardians) g.mode = this;
   }
+  depN(team) {
+    return this.depCount ? this.depCount[team] : this.deposit[team].length;
+  }
   guardianAttackable(g) {
-    return this.deposit[g.team].length > 0;
+    return this.depN(g.team) > 0;
   }
   guardianShoots(g) {
-    return this.deposit[g.team].length > 0;
+    return this.depN(g.team) > 0;
   }
   guardianHit(g, src, dmg) {
     this.dmgAcc[g.team] += dmg;
@@ -220,9 +223,46 @@ export class Scramble {
     this.match.alertGuardian(g.team);
   }
   score(team) {
-    let n = this.deposit[team].length;
+    let n = this.depN(team);
     for (const p of this.match.punchers) if (p.team === team) n += p.carry.sakura.length;
     return n;
+  }
+  // ===== オンライン対戦：状態を送る・受けとる・見た目だけ動かす =====
+  netWrite(w) {
+    w.u8(this.deposit[0].length);
+    w.u8(this.deposit[1].length);
+    for (const it of this.field.items) {
+      const st = it.state === 'field' ? 0 : it.state === 'carried' ? 1 : it.state === 'deposited' ? 2 : 3;
+      w.u8(st);
+      if (st === 3) {
+        w.i16(it.from.x * 10);
+        w.i16(it.from.y * 10);
+        w.i16(it.from.z * 10);
+        w.u8(it.t * 250);
+      }
+    }
+  }
+  netRead(r) {
+    this.depCount = [r.u8(), r.u8()];
+    for (const it of this.field.items) {
+      const st = r.u8();
+      if (st === 3) {
+        const x = r.i16() / 10, y = r.i16() / 10, z = r.i16() / 10, t = r.u8() / 250;
+        if (it.state !== 'returning') {
+          it.state = 'returning';
+          it.from.set(x, y, z);
+          it.pos.copy(it.from);
+          it.t = t;
+        }
+      } else {
+        const ns = st === 0 ? 'field' : st === 1 ? 'carried' : 'deposited';
+        if (ns === 'field' && it.state !== 'field') it.pos.copy(it.home);
+        it.state = ns;
+      }
+    }
+  }
+  netVisual(dt, t) {
+    this.field.update(dt, t, true);
   }
   fieldCount() {
     return this.field.items.filter((i) => i.state === 'field' || i.state === 'returning').length;
@@ -268,7 +308,7 @@ export class Scramble {
         this.depositT.set(p, 0);
         continue;
       }
-      const want = p.isPlayer ? p.depositHeld : true;
+      const want = p.cpu ? true : p.depositHeld;
       if (!want) {
         this.depositT.set(p, 0);
         continue;
@@ -485,6 +525,53 @@ export class FlagFlight {
     }
     for (const g of this.goalMeshes) g.children[0].rotation.z += dt * 0.5;
   }
+  netWrite(w) {
+    w.u8(this.delivered[0]);
+    w.u8(this.delivered[1]);
+    for (const f of this.flags) {
+      w.u8(f.wait > 0 ? 3 : f.state === 'carried' ? 1 : f.state === 'dropped' ? 2 : 0);
+      w.u8(f.idx);
+      w.i8(f.carrier && f.carrier.netId != null ? f.carrier.netId : -1);
+      w.u8(Math.max(0, f.wait) * 10);
+      w.vec(f.pos);
+    }
+  }
+  netRead(r) {
+    const M = this.match;
+    this.delivered[0] = r.u8();
+    this.delivered[1] = r.u8();
+    for (const p of M.punchers) p.carry.flag = null;
+    for (const f of this.flags) {
+      const st = r.u8();
+      f.idx = r.u8();
+      const c = r.i8();
+      f.wait = r.u8() / 10;
+      r.vec(f.pos);
+      f.state = st === 1 ? 'carried' : st === 2 ? 'dropped' : st === 3 ? 'wait' : 'home';
+      f.carrier = st === 1 && c >= 0 ? M.punchers[c] || null : null;
+      if (f.carrier) f.carrier.carry.flag = f;
+      const sp = M.stage.flagSpawns[f.team][f.idx];
+      if (sp) f.home.copy(sp);
+    }
+  }
+  netVisual(dt, t) {
+    for (const f of this.flags) {
+      const m = f.mesh;
+      m.visible = !(f.wait > 0);
+      if (f.state === 'carried' && f.carrier) {
+        f.pos.copy(f.carrier.pos);
+        m.position.copy(f.carrier.pos);
+        m.position.y += 0.6;
+        m.rotation.y = f.carrier.visYaw + Math.PI;
+      } else {
+        m.position.copy(f.pos);
+        m.position.y += -1.6 + Math.sin(t * 2) * 0.2;
+        m.rotation.y += dt * 0.8;
+      }
+      m.userData.cloth.rotation.y = Math.sin(t * 6 + f.team) * 0.25;
+    }
+    for (const g of this.goalMeshes) g.children[0].rotation.z += dt * 0.5;
+  }
   drop(f, at) {
     if (f.carrier) f.carrier.carry.flag = null;
     f.carrier = null;
@@ -536,7 +623,24 @@ export class FlagFlight {
 }
 
 // ===== ラピッドボール =====
+// ボールは何度も出たり消えたりするので、見た目をひとつ作って複製する
+const BALL_TPL = {};
 function makeBallMesh(rapid) {
+  const k = rapid ? 'r' : 'n';
+  if (!BALL_TPL[k]) {
+    const t = buildBallMesh(rapid);
+    t.traverse((o) => {
+      if (o.geometry) shareMark(o.geometry);
+      if (o.material) {
+        shareMark(o.material);
+        if (o.material.map) shareMark(o.material.map);
+      }
+    });
+    BALL_TPL[k] = t;
+  }
+  return BALL_TPL[k].clone();
+}
+function buildBallMesh(rapid) {
   const g = new THREE.Group();
   const tex = canvasTex(128, 64, (ctx, w, h) => {
     if (rapid) {
@@ -650,7 +754,8 @@ export class RapidBall {
     const mesh = makeBallMesh(rapid);
     mesh.position.copy(pos);
     this.match.scene.add(mesh);
-    const b = { pos, vel: new THREE.Vector3(), state: 'field', carrier: null, value: rapid ? 10 : 1, rapid, mesh, wanderT: 0, seen: false, noPickT: 0 };
+    this.nextBall = ((this.nextBall || 0) + 1) & 0xffff;
+    const b = { id: this.nextBall, pos, vel: new THREE.Vector3(), state: 'field', carrier: null, value: rapid ? 10 : 1, rapid, mesh, wanderT: 0, seen: false, noPickT: 0 };
     this.balls.push(b);
     if (rapid) {
       this.match.announce('ラピッドボール出現！（10点）', -1, true);
@@ -769,6 +874,81 @@ export class RapidBall {
     M.announce(p.displayName + ' ゴール！ +' + pts, p.team, true);
     M.sfx('goal', p);
     M.fx.boom && M.fx.boom(p.pos, TEAM[p.team].hex, 7);
+  }
+  netWrite(w) {
+    w.u16(this.scoreV[0]);
+    w.u16(this.scoreV[1]);
+    for (const s of this.gstate) {
+      w.u16(s.hp);
+      w.u8(Math.max(0, s.down) * 10);
+    }
+    w.u8(this.rapidOut ? 1 : 0);
+    w.u8(Math.min(255, this.balls.length));
+    for (const b of this.balls.slice(0, 255)) {
+      w.u16(b.id);
+      w.u8((b.rapid ? 1 : 0) | (b.state === 'carried' ? 2 : 0));
+      w.i8(b.carrier && b.carrier.netId != null ? b.carrier.netId : -1);
+      w.vec(b.pos);
+    }
+  }
+  netRead(r) {
+    const M = this.match;
+    this.scoreV[0] = r.u16();
+    this.scoreV[1] = r.u16();
+    for (const s of this.gstate) {
+      s.hp = r.u16();
+      s.down = r.u8() / 10;
+    }
+    this.rapidOut = r.u8() === 1;
+    const n = r.u8();
+    const seen = new Set();
+    for (const p of M.punchers) p.carry.balls = [];
+    for (let i = 0; i < n; i++) {
+      const id = r.u16(), fl = r.u8(), c = r.i8();
+      let b = this.balls.find((x) => x.id === id);
+      if (!b) {
+        const rapid = (fl & 1) === 1;
+        const mesh = makeBallMesh(rapid);
+        M.scene.add(mesh);
+        b = { id, pos: new THREE.Vector3(), net: new THREE.Vector3(), vel: new THREE.Vector3(), state: 'field', carrier: null, value: rapid ? 10 : 1, rapid, mesh, fresh: true };
+        this.balls.push(b);
+      }
+      r.vec(b.net || (b.net = new THREE.Vector3()));
+      if (b.fresh) {
+        b.pos.copy(b.net);
+        b.fresh = false;
+      }
+      b.state = fl & 2 ? 'carried' : 'field';
+      b.carrier = b.state === 'carried' && c >= 0 ? M.punchers[c] || null : null;
+      if (b.carrier) b.carrier.carry.balls.push(b);
+      seen.add(id);
+    }
+    for (let i = this.balls.length - 1; i >= 0; i--) {
+      const b = this.balls[i];
+      if (seen.has(b.id)) continue;
+      M.scene.remove(b.mesh);
+      this.balls.splice(i, 1);
+    }
+  }
+  netVisual(dt, t) {
+    const M = this.match;
+    for (let i = 0; i < 2; i++) {
+      const s = this.gstate[i];
+      const r = this.rings[i];
+      r.barrier.visible = s.down <= 0;
+      r.mesh.rotation.z += dt * (s.down > 0 ? 1.5 : 0.2);
+      M.guardians[i].model.visible = s.down <= 0;
+    }
+    for (const b of this.balls) {
+      if (b.state === 'carried' && b.carrier) {
+        const c = b.carrier;
+        const k = c.carry.balls.indexOf(b);
+        const a = t * 3 + k * 1.3;
+        b.pos.set(c.pos.x + Math.cos(a) * 1.4, c.pos.y + 0.8 + Math.sin(a * 0.7) * 0.3, c.pos.z + Math.sin(a) * 1.4);
+      } else if (b.net) b.pos.lerp(b.net, 1 - Math.exp(-12 * dt));
+      b.mesh.position.copy(b.pos);
+      b.mesh.children[0].rotation.y += dt * 2;
+    }
   }
   dropBall(b, at) {
     if (b.carrier) {

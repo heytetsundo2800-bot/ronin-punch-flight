@@ -15,6 +15,8 @@ class Net {
   constructor() {
     this.ready = null; // サーバーとデータベースが使えるか（null=まだ調べていない）
     this.acct = store.get(AKEY, null); // {uid, token, fc}
+    this.noAcct = !!store.get('rpf_noacct', false); // アカウントを消した人には、自動では作らない
+    this.reach = null; // 'ok' | 'setup'（サーバーの準備中）| 'offline'（届かない）
     this.app = null;
     this.busy = false;
   }
@@ -62,26 +64,52 @@ class Net {
     }
   }
   async ping() {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 7000) : null;
     try {
-      const r = await fetch(API + '?a=ping', { cache: 'no-store' });
+      const r = await fetch(API + '?a=ping', { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
       const j = await r.json();
       this.ready = !!(j && j.ready);
+      this.reach = this.ready ? 'ok' : 'setup';
     } catch (e) {
       this.ready = false;
+      this.reach = 'offline';
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     if (this.ready && this.app && this.app.save.name && !this.acct) this.register();
     else if (this.ready && this.acct) this.me();
+    // ネットがもどったら、もう一度たしかめる
+    if (this.reach === 'offline' && !this._onl && typeof window !== 'undefined') {
+      this._onl = true;
+      window.addEventListener('online', () => {
+        this._onl = false;
+        this.ping();
+      }, { once: true });
+    }
     return this.ready;
+  }
+  // サーバーにつながらない理由の説明
+  whyNot() {
+    if (this.reach === 'offline') return 'ネットにつながっていないか、サーバーに届きませんでした。';
+    if (this.reach === 'setup') return 'サーバーはまだ準備中です。準備ができたら自動で使えるようになります。';
+    return 'サーバーを確認中です。';
   }
   saveAcct() {
     if (this.acct) store.set(AKEY, this.acct);
     else store.del(AKEY);
   }
   // 名前を決めたら自動で登録（ランキングに出るため）
-  async register() {
+  async register(manual) {
     if (!this.ready || this.acct || this.busy) return;
+    // 自分で消した人・この端末に保存できない人（プライベートブラウズなど）には自動で作らない
+    if (!manual && (this.noAcct || !store.ok())) return;
     const S = this.app.save;
     if (!S.name) return;
+    if (manual && this.noAcct) {
+      this.noAcct = false;
+      store.del('rpf_noacct');
+    }
     this.busy = true;
     const r = await this.call('register', { name: S.name, c: S.char, save: this.packSave(S) }, { anon: true });
     this.busy = false;
@@ -100,12 +128,8 @@ class Net {
       if (r.fc) this.acct.fc = r.fc;
       this.saveAcct();
       if (this.pendingFriend) this.addFriend(this.pendingFriend);
-    } else if (r.err === 'auth') {
-      // ほかの端末に引き継がれた
-      this.acct = null;
-      this.saveAcct();
-      this.app && this.app.toast('このデータはほかの端末に引き継がれました');
     }
+    // 引き継がれた（auth）ときのお知らせは call() で出している
   }
   packSave(S) {
     let j = JSON.stringify(S);
@@ -157,6 +181,8 @@ class Net {
     const old = this.acct;
     this.acct = { uid: r.uid, token: r.token, fc: r.fc };
     this.saveAcct();
+    this.noAcct = false;
+    store.del('rpf_noacct');
     // 新しいスマホで名前を入れたときに自動でできたアカウント（ほとんど遊んでいない）は消しておく
     if (old && old.uid !== r.uid && this.app && (this.app.save.plays || 0) < 3) {
       const keep = this.acct;
@@ -192,6 +218,9 @@ class Net {
     if (r.ok) {
       this.acct = null;
       this.saveAcct();
+      this.noAcct = true;
+      store.set('rpf_noacct', true);
+      this.friendsCache = null;
     }
     return r;
   }
@@ -200,13 +229,21 @@ class Net {
   renderAccount(box) {
     const A = this.acct;
     if (this.ready === false || this.ready === null) {
-      box.innerHTML = `<h3>アカウント</h3><p class="note">${this.ready === null ? 'サーバーを確認中…' : 'アカウント（機種変更・ランキング）のサーバーは準備中です。いまは、この端末にだけ記録が保存されます。'}</p>`;
+      box.innerHTML = `<h3>アカウント</h3><p class="note">${this.ready === null ? 'サーバーを確認中…' : this.whyNot() + '<br>いまは、この端末にだけ記録が保存されます。'}</p>${this.ready === false ? '<button class="btn small k retry">もう一度ためす</button>' : ''}`;
       if (this.ready === null) setTimeout(() => this.app && box.isConnected && this.renderAccount(box), 1500);
+      const rt = box.querySelector('.retry');
+      if (rt)
+        rt.onclick = async () => {
+          this.ready = null;
+          this.renderAccount(box);
+          await this.ping();
+          if (box.isConnected) this.renderAccount(box);
+        };
       return;
     }
     const inst = isIOS && !isStandalone() ? '<p class="note">※iPhoneでは、Safari とホーム画面に追加したアプリで保存場所が別になります。アプリで遊ぶ人は、アプリの中で引き継ぎコードを使ってください。</p>' : '';
     box.innerHTML = `<h3>アカウント</h3>
-      ${A ? `<p>フレンドコード：<b style="color:#ffd400;letter-spacing:1px">${escapeHtml(A.fc || '----')}</b></p>` : '<p class="note">名前を決めると自動でアカウントができます。</p>'}
+      ${A ? `<p>フレンドコード：<b style="color:#ffd400;letter-spacing:1px">${escapeHtml(A.fc || '----')}</b></p>` : this.noAcct ? '<p class="note">アカウントは消しました。ランキングやフレンドを使うときは「アカウントを作る」を押してね。</p>' : !store.ok() ? '<p class="note">この端末（ブラウザ）は記録を保存できない設定です（プライベートブラウズなど）。アプリを閉じると記録が消えます。</p>' : '<p class="note">名前を決めると自動でアカウントができます。</p>'}
       <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
         ${A ? '<button class="btn small y invite">フレンドを招待</button><button class="btn small k addf">コードで追加</button><button class="btn small k code">機種変更（引き継ぎコード）</button>' : '<button class="btn small y reg">アカウントを作る</button>'}
         <button class="btn small k restore">引き継ぎコードで戻す</button>
@@ -214,7 +251,8 @@ class Net {
       </div>${inst}`;
     const q = (s) => box.querySelector(s);
     if (q('.reg')) q('.reg').onclick = async () => {
-      await this.register();
+      const r = await this.register(true);
+      if (r && !r.ok) this.app.toast(this.errText(r.err));
       this.renderAccount(box);
     };
     if (q('.invite')) q('.invite').onclick = () => {

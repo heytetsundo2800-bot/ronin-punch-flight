@@ -77,6 +77,9 @@ export class Puncher {
     this.aura = null;
     this.jetOn = false;
     this.speedMul = def.speed;
+    this.life = 0; // 復活した回数（オンライン対戦で古い位置を捨てるため）
+    this.human = isPlayer;
+    this.cpu = !isPlayer;
   }
 
   get radius() {
@@ -352,28 +355,7 @@ export class Puncher {
       if (this.respawnT <= 0) this.match.respawn(this);
       return;
     }
-    // タイマー
-    this.stateT += dt;
-    this.invuln = Math.max(0, this.invuln - dt);
-    this.justT = Math.max(0, this.justT - dt);
-    this.ksCd = Math.max(0, this.ksCd - dt);
-    for (let i = 0; i < this.omCd.length; i++) this.omCd[i] = Math.max(0, this.omCd[i] - dt);
-    this.elemCd = Math.max(0, this.elemCd - dt);
-    this.diskLock = Math.max(0, this.diskLock - dt);
-    this.stunT = Math.max(0, this.stunT - dt);
-    this.hurtT = Math.max(0, this.hurtT - dt);
-    const B = this.buffs;
-    for (const k of ['atkT', 'spdT', 'shieldT', 'slowT', 'regenT']) B[k] = Math.max(0, B[k] - dt);
-    if (B.shieldT <= 0) B.shield = 0;
-    if (B.regenT > 0) this.heal(this.maxHp * B.regen * dt, true);
-    if (B.big > 0) {
-      B.big -= dt;
-      if (B.big <= 0) this.match.skills.endBig(this);
-    }
-    if (B.ikemen > 0) {
-      B.ikemen -= dt;
-      if (B.ikemen <= 0) this.match.skills.endIkemen(this);
-    }
+    this.tickTimers(dt);
     // ロックの相手がいなくなった／遠すぎる
     if (this.lock && (!this.lock.alive || this.lock.pos.distanceTo(this.pos) > COMBAT.lockRange * 1.15)) this.lock = null;
 
@@ -559,6 +541,31 @@ export class Puncher {
     this.addSP(moved / 900);
 
     this.animate(dt);
+  }
+
+  // タイマー（オンライン対戦のホストは、ほかの端末の人もこれだけ進める）
+  tickTimers(dt) {
+    this.stateT += dt;
+    this.invuln = Math.max(0, this.invuln - dt);
+    this.justT = Math.max(0, this.justT - dt);
+    this.ksCd = Math.max(0, this.ksCd - dt);
+    for (let i = 0; i < this.omCd.length; i++) this.omCd[i] = Math.max(0, this.omCd[i] - dt);
+    this.elemCd = Math.max(0, this.elemCd - dt);
+    this.diskLock = Math.max(0, this.diskLock - dt);
+    this.stunT = Math.max(0, this.stunT - dt);
+    this.hurtT = Math.max(0, this.hurtT - dt);
+    const B = this.buffs;
+    for (const k of ['atkT', 'spdT', 'shieldT', 'slowT', 'regenT']) B[k] = Math.max(0, B[k] - dt);
+    if (B.shieldT <= 0) B.shield = 0;
+    if (B.regenT > 0) this.heal(this.maxHp * B.regen * dt, true);
+    if (B.big > 0) {
+      B.big -= dt;
+      if (B.big <= 0) this.match.skills.endBig(this);
+    }
+    if (B.ikemen > 0) {
+      B.ikemen -= dt;
+      if (B.ikemen <= 0) this.match.skills.endIkemen(this);
+    }
   }
 
   integrate(dt) {
