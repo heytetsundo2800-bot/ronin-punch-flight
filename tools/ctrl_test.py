@@ -81,8 +81,12 @@ async def main():
         s1 = await st()
         check('B tap -> dash', s1['state'] == 'dash', s1['state'])
         check('B dash uses 1 boost', abs(s1['boost'] - (s0['boost'] - 1)) < 0.15, round(s1['boost'], 2))
-        await pg.wait_for_timeout(500)
-        s2 = await st()
+        # 遅い環境ではゲームの時間がゆっくり進むので、状態が変わるまで待つ（最大2秒）
+        for _ in range(20):
+            await pg.wait_for_timeout(100)
+            s2 = await st()
+            if s2['state'] != 'dash':
+                break
         check('B after dash -> cruise (keeps flying)', s2['state'] == 'cruise' and s2['sp'] > 10, (s2['state'], round(s2['sp'], 1)))
         await ev({'type': 'flick', 'dir': {'x': 0, 'y': 1}})
         await pg.wait_for_timeout(450)

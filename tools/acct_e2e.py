@@ -100,6 +100,16 @@ async def main():
         check('C new token works', r3['status'] == 200 and r3['j']['name'] == 'テツンド', r3['j'])
         rep = await B.evaluate("async () => { const r = await fetch('/api/rpf', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({a:'report', text:'テスト', info: window.__app.deviceInfo()})}); return r.json(); }")
         check('bug report accepted', rep.get('ok') is True, rep)
+        # アカウントを消したら、自動ではもう作らない（試合のあと・次の起動でも）
+        d = await B.evaluate("async () => { const n = window.__app.net; const r = await n.deleteAccount(); await n.sync(window.__app.save, {}); await n.ping(); await new Promise(r => setTimeout(r, 800)); return [r.ok, !!n.acct, localStorage.getItem('rpf_acct_v1')]; }")
+        check('deleted account stays deleted after sync/ping', d[0] and not d[1] and d[2] is None, d)
+        await B.reload()
+        await B.wait_for_selector('#boot', state='detached', timeout=30000)
+        await B.wait_for_timeout(2500)
+        d2 = await B.evaluate("() => localStorage.getItem('rpf_acct_v1')")
+        check('deleted account stays deleted after reload', d2 is None, d2)
+        d3 = await B.evaluate("async () => { const n = window.__app.net; const r = await n.register(true); return [!!(r && r.ok), !!n.acct, localStorage.getItem('rpf_noacct')]; }")
+        check('manual create works again after delete', d3[0] and d3[1] and d3[2] is None, d3)
         errs = A.errs + B.errs + C.errs
         check('no page errors', not errs, errs[:3])
         print(f'account e2e: {sum(results)}/{len(results)} passed')

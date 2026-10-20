@@ -76,17 +76,24 @@ async def main():
         await pg.evaluate('() => { const m = window.__app.match, p = m.player; const g = m.guardians[p.team]; p.pos.copy(g.pos).add({x:0,y:0,z:7}); p.vel.set(0,0,0); }')
         await pg.wait_for_timeout(600)
         await pg.screenshot(path=f'{OUT}/tut_03.png')
-        dep = await pg.query_selector('.depbtn:not(.hidden)')
+        try:
+            dep = await pg.wait_for_selector('.depbtn:not(.hidden)', timeout=6000)
+        except Exception:
+            dep = None
+            print('deposit button did not appear')
         if dep:
             bb = await dep.bounding_box()
             cdp = await ctx.new_cdp_session(pg)
             await cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': bb['x'] + 30, 'y': bb['y'] + 30, 'id': 0}]})
-            await pg.wait_for_timeout(1200)
+            for _ in range(20):
+                await pg.wait_for_timeout(300)
+                if await pg.evaluate('() => window.__app.match.step >= 8'): break
             await cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
         log.append(await step())
         print('after deposit:', log[-1])
         await pg.wait_for_timeout(1500)
-        # 9 attack 4 hits
+        # 9 attack 4 hits（練習相手が出るまで待つ。CPUが混んでいると預けるのに時間がかかる）
+        await pg.wait_for_function('window.__app.match && window.__app.match.enemy', timeout=15000)
         await pg.screenshot(path=f'{OUT}/tut_04.png')
         await pg.evaluate('() => { const m = window.__app.match, p = m.player, e = m.enemy; p.pos.copy(e.pos).add({x:0,y:0,z:-2.5}); p.vel.set(0,0,0); p.yaw = 0; p.lock = e; }')
         await pg.wait_for_timeout(2500)
