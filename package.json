@@ -1,0 +1,17 @@
+{
+  "name": "ronin-punch-flight",
+  "version": "1.0.0",
+  "private": true,
+  "description": "浪人パンチフライト：4対4の360°空中バトル（スマホのブラウザで遊べる）",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "dev": "node tools/build.mjs --dev"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "three": "0.162.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
