@@ -1,0 +1,17 @@
+{
+  "name": "浪人パンチフライト",
+  "short_name": "浪人パンチ",
+  "description": "一浪の空で、殴りあえ。4対4の360°空中バトル。",
+  "start_url": "/?src=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffd400",
+  "theme_color": "#ffd400",
+  "lang": "ja",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
