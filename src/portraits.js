@@ -1,0 +1,121 @@
+// キャラの顔アイコン・全身の絵を3Dモデルから作る
+import * as THREE from 'three';
+import { buildPuncher, poseModel } from './model.js';
+import { PUNCHERS } from './characters.js';
+import { TEAM } from './config.js';
+
+export class Portraits {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.cache = new Map();
+    this.scene = new THREE.Scene();
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8899bb, 1.7));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(2, 4, 5);
+    this.scene.add(sun);
+    this.cam = new THREE.PerspectiveCamera(30, 1, 0.05, 50);
+  }
+  render(id, team, kind, w0, h0) {
+    const key = id + '|' + team + '|' + kind + '|' + w0;
+    if (this.cache.has(key)) return this.cache.get(key);
+    const w = w0 * 2, h = h0 * 2; // 2倍で描いて縮める（ギザギザを消す）
+    const R = this.renderer;
+    const model = buildPuncher(PUNCHERS[id], team);
+    this.scene.add(model);
+    const st = { mode: kind === 'face' ? 'hover' : kind, t: 0.6, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.35, heavy: false, runPhase: 0, snap: true };
+    poseModel(model, st, 1);
+    model.updateMatrixWorld(true);
+    const head = model.userData.parts.head;
+    const hp = new THREE.Vector3();
+    head.getWorldPosition(hp);
+    const cam = this.cam;
+    cam.aspect = w / h;
+    if (kind === 'face') {
+      cam.fov = 26;
+      cam.position.set(hp.x + 0.35, hp.y + 0.05, hp.z + 1.55);
+      cam.lookAt(hp.x, hp.y - 0.02, hp.z);
+    } else if (kind === 'bust') {
+      cam.fov = 30;
+      cam.position.set(hp.x + 0.6, hp.y - 0.1, hp.z + 2.4);
+      cam.lookAt(hp.x, hp.y - 0.35, hp.z);
+    } else {
+      // 全身（スペシャル・勝ちポーズなど）
+      model.rotation.y = 0.35;
+      model.updateMatrixWorld(true);
+      cam.fov = 30;
+      cam.position.set(0.3, 0.15, 4.4);
+      cam.lookAt(0, 0.05, 0);
+    }
+    cam.updateProjectionMatrix();
+    const rt = new THREE.WebGLRenderTarget(w, h, { samples: 0 });
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    const prevT = R.getRenderTarget();
+    const prevC = R.getClearColor(new THREE.Color());
+    const prevA = R.getClearAlpha();
+    R.setRenderTarget(rt);
+    R.setClearColor(0x000000, 0);
+    R.clear();
+    R.render(this.scene, cam);
+    const px = new Uint8Array(w * h * 4);
+    R.readRenderTargetPixels(rt, 0, 0, w, h, px);
+    R.setRenderTarget(prevT);
+    R.setClearColor(prevC, prevA);
+    rt.dispose();
+    this.scene.remove(model);
+    model.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+    });
+    // 上下を反転してキャンバスへ
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * w * 4;
+      img.data.set(px.subarray(src, src + w * 4), y * w * 4);
+    }
+    // 色空間：WebGL2 ではGPUが sRGB にしてくれる。WebGL1 のときだけ自分で直す
+    if (!R.capabilities.isWebGL2) {
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        d[i] = lin2srgb(d[i]);
+        d[i + 1] = lin2srgb(d[i + 1]);
+        d[i + 2] = lin2srgb(d[i + 2]);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const c2 = document.createElement('canvas');
+    c2.width = w0;
+    c2.height = h0;
+    const ctx2 = c2.getContext('2d');
+    ctx2.imageSmoothingEnabled = true;
+    ctx2.imageSmoothingQuality = 'high';
+    ctx2.drawImage(c, 0, 0, w0, h0);
+    let url = '';
+    try {
+      url = c2.toDataURL('image/png');
+    } catch (e) {}
+    this.cache.set(key, url);
+    return url;
+  }
+  get(id, team) {
+    return this.render(id, team, 'face', 128, 128);
+  }
+  bust(id, team) {
+    return this.render(id, team, 'bust', 256, 320);
+  }
+  full(id, team, pose = 'special') {
+    return this.render(id, team, pose, 384, 512);
+  }
+}
+
+const LUT = new Uint8Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  const s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  LUT[i] = Math.round(Math.max(0, Math.min(1, s)) * 255);
+}
+function lin2srgb(v) {
+  return LUT[v];
+}
