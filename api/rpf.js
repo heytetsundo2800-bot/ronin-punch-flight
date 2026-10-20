@@ -41,6 +41,9 @@ const LIMIT = {
   restore: [12, 900], // 引き継ぎコードを試す：IPごとに15分12回（試した回数）
   sync: [40, 600], // 同期：uid ごとに10分40回（受けつけた回数）
   report: [5, 3600], // 不具合の報告：IPごとに1時間5回
+  rmk: [20, 3600], // 部屋をつくる：IPごとに1時間20回
+  rmj: [60, 3600], // 部屋に入る：IPごとに1時間60回
+  rmio: [400, 60], // 部屋の手紙の送り受け：IPごとに1分400回（同じWi-Fiに何人もいるとき用。ふつうの制限とは別）
 };
 const UID_RE = /^[0-9a-z]{6,20}$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,100}$/;
@@ -59,6 +62,8 @@ const K = {
   code: (h) => 'rpf:tc:' + h, // 引き継ぎコード（のハッシュ）→ uid
   rl: (kind, id) => 'rpf:rl:' + kind + ':' + id, // 回数制限のカウンター
   reports: 'rpf:reports', // リスト：不具合の報告（新しい順）
+  room: (code) => 'rpf:rm:' + code, // オンライン対戦の部屋（JSON）
+  rq: (code, pid) => 'rpf:rq:' + code + ':' + pid, // リスト：部屋の中の手紙（接続のあいさつ）
 };
 
 class ApiError extends Error {
@@ -314,10 +319,11 @@ const bump = (key, sec) => [
 //   limits: [[key, 回数, 秒]] … ここで数える（試した回数で数える）。IPごとの制限はいつも入る
 //   peek(uid): [[key, 回数]] … 読むだけ。うまくいったときに呼び出し側で bump する
 //   extra(uid): いっしょに送る読みとりのコマンド（uid はまだ確かめる前のもの）
-async function begin(ctx, { auth = 'need', fields = [], limits = [], peek = null, extra = null } = {}) {
+//   noIp: true … ふつうの IP ごとの制限を使わない（部屋の手紙は回数が多いので、別の制限を limits で入れる）
+async function begin(ctx, { auth = 'need', fields = [], limits = [], peek = null, extra = null, noIp = false } = {}) {
   const a = auth !== 'none' && ctx.auth && !ctx.auth.bad ? ctx.auth : null;
   if (auth === 'need' && !a) fail(401, 'auth');
-  const lims = [[K.rl('ip', ctx.ip), ...LIMIT.ip], ...limits];
+  const lims = noIp ? limits.slice() : [[K.rl('ip', ctx.ip), ...LIMIT.ip], ...limits];
   const cmds = [];
   for (const [key, , sec] of lims) cmds.push(...bump(key, sec));
   const pk = peek ? peek(a ? a.uid : null) : [];
@@ -680,6 +686,156 @@ ACTIONS.del = async (ctx) => {
     }
   }
   await ctx.db.tx(cmds);
+  return { ok: true };
+};
+
+// ===== オンライン対戦の部屋 =====
+// サーバーがするのは「つなぐためのあいさつ（WebRTC の SDP）」の受けわたしだけ。試合のデータは端末どうしで直接やりとりする
+const ROOM_RE = /^\d{5}$/;
+const PID_RE = /^[0-9a-z]{8}$/;
+const ROOM_TTL = 3 * 3600; // 部屋は3時間で消える
+const RQ_TTL = 300; // 手紙は5分で消える
+const RQ_KEEP = 24; // 1人あての手紙は新しい24通まで
+const SIG_MAX = 16000; // 手紙1通の大きさ
+const DEFAULT_ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }, { urls: ['stun:stun.cloudflare.com:3478'] }];
+
+// つなぐときに使うサーバー（STUN／TURN）
+//   RPF_ICE：JSON の配列（例 [{"urls":"turn:example.com:3478","username":"u","credential":"p"}]）
+//   METERED_DOMAIN ＋ METERED_API_KEY：Metered（Open Relay）の TURN（無料で登録できる）
+//   CF_TURN_KEY_ID ＋ CF_TURN_KEY_TOKEN：Cloudflare の TURN（その場で期限つきのパスワードをもらう）
+let iceCache = { at: 0, v: null };
+async function iceServers(env = process.env) {
+  if (iceCache.v && Date.now() - iceCache.at < 3600 * 1000) return iceCache.v;
+  let list = DEFAULT_ICE;
+  try {
+    if (typeof env.RPF_ICE === 'string' && env.RPF_ICE.trim()) {
+      const v = JSON.parse(env.RPF_ICE);
+      if (Array.isArray(v) && v.length && v.every((x) => x && (typeof x.urls === 'string' || Array.isArray(x.urls)))) list = v.concat(DEFAULT_ICE);
+    } else if (env.METERED_API_KEY && env.METERED_DOMAIN && /^[a-z0-9-]+(\.metered\.live)?$/i.test(env.METERED_DOMAIN)) {
+      // Metered（Open Relay）の TURN：無料で登録して API キーをもらう
+      const host = env.METERED_DOMAIN.includes('.') ? env.METERED_DOMAIN : env.METERED_DOMAIN + '.metered.live';
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        const r = await fetch('https://' + host + '/api/v1/turn/credentials?apiKey=' + encodeURIComponent(env.METERED_API_KEY), { signal: ctrl.signal });
+        const v = await r.json();
+        if (Array.isArray(v) && v.length) list = v.concat(DEFAULT_ICE);
+      } finally {
+        clearTimeout(timer);
+      }
+    } else if (env.CF_TURN_KEY_ID && env.CF_TURN_KEY_TOKEN) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        const r = await fetch('https://rtc.live.cloudflare.com/v1/turn/keys/' + encodeURIComponent(env.CF_TURN_KEY_ID) + '/credentials/generate', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + env.CF_TURN_KEY_TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ttl: 6 * 3600 }),
+          signal: ctrl.signal,
+        });
+        const j = await r.json();
+        const v = j && j.iceServers;
+        if (v && (Array.isArray(v) ? v.length : v.urls)) list = (Array.isArray(v) ? v : [v]).concat(DEFAULT_ICE);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  } catch (e) {
+    console.error('[rpf] ice: ' + (e && e.message));
+  }
+  iceCache = { at: Date.now(), v: list };
+  return list;
+}
+function parseRoom(v) {
+  if (typeof v !== 'string') return null;
+  try {
+    const o = JSON.parse(v);
+    return o && typeof o.h === 'string' ? o : null;
+  } catch (e) {
+    return null;
+  }
+}
+const roomCode = (v) => {
+  if (typeof v !== 'string' || !ROOM_RE.test(v)) fail(400, 'bad');
+  return v;
+};
+const peerId = (v) => {
+  if (typeof v !== 'string' || !PID_RE.test(v)) fail(400, 'bad');
+  return v;
+};
+
+// 部屋をつくる：{n:名前} → {code, pid, hk, ice}（hk は部屋をしめるときの合いことば。保存するのはハッシュ）
+ACTIONS.rmk = async (ctx, b) => {
+  const name = b.n == null ? '' : checkName(b.n);
+  await begin(ctx, { auth: 'opt', limits: [[K.rl('rmk', ctx.ip), ...LIMIT.rmk]] });
+  const pid = randStr(B36, 8);
+  const hk = newToken();
+  const val = JSON.stringify({ h: pid, k: sha(hk), n: name, t: ctx.now, o: 1 });
+  for (let i = 0; i < 6; i++) {
+    const code = String(crypto.randomInt(10000, 100000));
+    const [r] = await ctx.db.pipe([['SET', K.room(code), val, 'NX', 'EX', ROOM_TTL]]);
+    if (r === 'OK') return { ok: true, code, pid, hk, ice: await iceServers() };
+  }
+  fail(503, 'busy');
+};
+
+// 部屋に入る：{code} → {pid, host, n, ice}
+ACTIONS.rmj = async (ctx, b) => {
+  const code = roomCode(b.code);
+  const { x } = await begin(ctx, { auth: 'opt', limits: [[K.rl('rmj', ctx.ip), ...LIMIT.rmj]], extra: () => [['GET', K.room(code)]] });
+  const room = parseRoom(x[0]);
+  if (!room) fail(404, 'nf');
+  if (!room.o) fail(409, 'closed');
+  return { ok: true, pid: randStr(B36, 8), host: room.h, n: room.n || '', ice: await iceServers() };
+};
+
+// 手紙を送る：{code, to, from, d}
+ACTIONS.rms = async (ctx, b) => {
+  const code = roomCode(b.code);
+  const to = peerId(b.to), from = peerId(b.from);
+  if (typeof b.d !== 'string' || !b.d || b.d.length > SIG_MAX) fail(400, 'bad');
+  const { x } = await begin(ctx, { auth: 'none', noIp: true, limits: [[K.rl('rio', ctx.ip), ...LIMIT.rmio]], extra: () => [['GET', K.room(code)]] });
+  if (!parseRoom(x[0])) fail(404, 'nf');
+  const q = K.rq(code, to);
+  await ctx.db.pipe([
+    ['RPUSH', q, JSON.stringify({ f: from, d: b.d })],
+    ['LTRIM', q, -RQ_KEEP, -1],
+    ['EXPIRE', q, RQ_TTL],
+  ]);
+  return { ok: true };
+};
+
+// 手紙を受けとる：{code, me} → {m:[{f, d}], gone}
+ACTIONS.rmp = async (ctx, b) => {
+  const code = roomCode(b.code);
+  const me = peerId(b.me);
+  const { x } = await begin(ctx, { auth: 'none', noIp: true, limits: [[K.rl('rio', ctx.ip), ...LIMIT.rmio]], extra: () => [['EXISTS', K.room(code)]] });
+  const q = K.rq(code, me);
+  const [list] = await ctx.db.tx([
+    ['LRANGE', q, 0, -1],
+    ['DEL', q],
+  ]);
+  const m = [];
+  for (const v of Array.isArray(list) ? list : []) {
+    try {
+      const o = JSON.parse(v);
+      if (o && typeof o.f === 'string' && typeof o.d === 'string') m.push(o);
+    } catch (e) {}
+  }
+  return { ok: true, m, gone: int0(x[0]) === 0 };
+};
+
+// 部屋をしめる・受付を止める・再開する（部屋をつくった人だけ）：{code, hk, op:'close'|'lock'|'open'}
+ACTIONS.rmx = async (ctx, b) => {
+  const code = roomCode(b.code);
+  if (typeof b.hk !== 'string' || !TOKEN_RE.test(b.hk)) fail(400, 'bad');
+  if (!['close', 'lock', 'open'].includes(b.op)) fail(400, 'bad');
+  const { x } = await begin(ctx, { auth: 'none', extra: () => [['GET', K.room(code)]] });
+  const room = parseRoom(x[0]);
+  if (!room) return { ok: true, gone: true };
+  if (room.k !== sha(b.hk)) fail(403, 'deny');
+  if (b.op === 'close') await ctx.db.pipe([['DEL', K.room(code)]]);
+  else await ctx.db.pipe([['SET', K.room(code), JSON.stringify({ ...room, o: b.op === 'open' ? 1 : 0 }), 'KEEPTTL']]);
   return { ok: true };
 };
 
