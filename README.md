@@ -17,11 +17,34 @@
 | 下フリック | 止まっている：バックステップ／飛んでいる：急ブレーキ |
 | 上と下のフリックを続けて | 180度ターン（ロックオンは外れる） |
 | 右の顔アイコン | タップでロックオン → 近づくと自動でパンチ |
-| 下のアイコンを上フリック | スキル（お守り・パンチャースキル） |
-| お守りを下フリック | その色の属性に変える（火＞風＞水＞火） |
+| 下のアイコンを上フリック | スキル（ディスク・パンチャースキル） |
+| ディスクを下フリック | その色の属性に変える（火＞風＞水＞火） |
 | SPボタン | スペシャル |
 
 ジャスト回避（攻撃の直前にフリック）、壁キック（壁へブースト）、ダッシュ攻撃（ロック中にタップ、ゲージ2つ）もあります。
+
+## ディスク（モンスターの技）
+
+キックフライトのディスクと同じく、ディスクはモンスターの技をキャラに付ける。使うと六角形の光からモンスターがキャラの右前に出て、その口から技が出る。溜めているあいだに強い攻撃を受けると、モンスターが割れて技は出ない。レア度（N・R・SR）が高いほど、呼び出しが派手（SRは光の柱）。
+
+| ディスク | 種類 | 属性 | 技 |
+|---|---|---|---|
+| ブレイズドレイク | ATK | 火 | ホーミングフレア（追いかける火の玉） |
+| ゲイルファルコン | ATK | 風 | ゲイルブーメラン（行って帰るかまいたち） |
+| ランスナーヴァル | ATK | 水 | アクアランス（まっすぐ速い水の槍） |
+| ヒールジェリー | HEAL | 水 | ヒールバブル（HP30%回復） |
+| スリープアウル | HEAL | 風 | ムーンララバイ（近くの味方も少しずつ回復） |
+| ブレイブレオ | BUFF | 火 | ブレイブロア（攻撃力アップ） |
+| ブリッツチーター | BUFF | 風 | ブリッツアクセル（スピードアップ） |
+| アイギスタートル | BUFF | 水 | アイギスシェル（バリア） |
+| ボムビートル | TRAP | 火 | ビートルボム（その場に爆弾虫） |
+| グリッドオクトパス | TRAP | 水 | グリッドフィールド（敵がおそくなる結界） |
+| フェイズフォックス | WARP | 風 | フェイズシフト（前へ瞬間移動） |
+| ホタルゲート | WARP | 水 | ホームゲート（ダルマの前へ） |
+| ロケットボア | MOVE | 火 | ロケットチャージ（大きくダッシュ） |
+| スカイスワロー | MOVE | 風 | スカイステップ（ブースト全回復） |
+
+ホームの「ディスク」で4枚を選ぶ。上の窓で、選んだモンスターが3Dで技の動きを見せる。モンスターはすべてこのゲームのオリジナル（`src/monsters.js` で、丸・円すい・曲がった管・切りぬいた板を組み合わせて作っている）。
 
 ## ルール
 
@@ -50,9 +73,9 @@
 
 ## キャラ
 
-- **トラ**（アタック・火）タイガーラッシュ／虎の大爆笑
+- **ドラ**（アタック・火）ドラ・ラッシュ／ドラの大爆笑
 - **エブン**（スピード・風）ゴーグルダイブ／ビッグエブン
-- **青町オーシャンTV**（サポート・水）サムネ撮影フラッシュ／メガネオフ
+- **アオッチOcean TV**（サポート・水）サムネ撮影フラッシュ／メガネオフ
 
 ## 開発
 
@@ -66,6 +89,7 @@ npm run build    # 本番ビルド（Vercel もこれを実行）
 - `web/` HTML・アイコン・サービスワーカー
 - `api/rpf.js` アカウント・ランキングのサーバー（Vercel Functions ＋ Upstash Redis、キーは `rpf:` で始まる）
 - `tools/` ビルドと自動テスト（Playwright）
+- `tools/music/bgm.py` BGMをコードで作る（numpy＋ffmpeg）。`python3 tools/music/bgm.py all <出力先>` で `bgm_lobby` と `bgm_battle` の m4a・mp3 ができる。`web/` に置くと、ゲームがつなぎ目なしでループさせる（メモリを食わないように、展開するのは鳴らしている曲だけ。もう1曲は圧縮のまま持つ。BGMの音量が0のときは読みこまない）
 
 データベースの環境変数：`KV_REST_API_URL` と `KV_REST_API_TOKEN`（Vercel の Storage で Upstash をつなぐと入る）。無いときもゲームは遊べる（記録は端末だけ）。
 
@@ -74,4 +98,4 @@ npm run build    # 本番ビルド（Vercel もこれを実行）
 - または `CF_TURN_KEY_ID` と `CF_TURN_KEY_TOKEN`：Cloudflare の TURN
 - または `RPF_ICE`：ICE サーバーの JSON 配列をそのまま
 
-テスト：`node tools/api/api_test.js`、`node tools/api/room_test.js`、`node tools/api/devserver.js --port 8813` を動かして `python3 tools/acct_e2e.py`・`python3 tools/online_e2e.py [scramble|flag|ball] [sakura|campus]`・`python3 tools/online_lag.py 150 80 0.1`・`python3 tools/stage_test.py`（ステージの物がサクラやボールにめりこんでいないか）
+テスト：`node tools/api/api_test.js`、`node tools/api/room_test.js`、`node tools/api/devserver.js --port 8813` を動かして `python3 tools/acct_e2e.py`・`python3 tools/online_e2e.py [scramble|flag|ball] [sakura|campus]`・`python3 tools/online_lag.py 150 80 0.1`・`python3 tools/stage_test.py`（ステージの物がサクラやボールにめりこんでいないか）。`public/` を 8812 で配信して `python3 tools/ctrl_test.py`・`tools/tut_test.py`・`tools/modes_test.py`・`tools/disc_test.py`（ディスクのモンスター）・`tools/bgm_test.py`（BGM）
