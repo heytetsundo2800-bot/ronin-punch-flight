@@ -19,6 +19,7 @@ export class Input {
     this.knobEl = knobEl;
     this.enabled = false;
     this.invertY = false;
+    this.invertX = false;
     this.sens = 1;
     this.events = [];
     this.hold = false;
@@ -241,7 +242,8 @@ export class Input {
     if (K.has('s') || K.has('arrowdown')) sy = -1;
     if (K.has(' ') || K.has('shift')) hold = true;
     this.hold = hold && this.enabled;
-    this.stickX = clamp(sx * this.sens, -1, 1);
+    // 指を右へ＝右を向く（キックフライトと同じ）。せっていで反対にもできる
+    this.stickX = clamp(sx * this.sens * (this.invertX ? -1 : 1), -1, 1);
     this.stickY = clamp(sy * this.sens * (this.invertY ? -1 : 1), -1, 1);
   }
 

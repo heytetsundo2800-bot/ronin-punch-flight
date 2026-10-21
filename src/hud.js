@@ -19,6 +19,9 @@ function addHaptic(btn) {
 
 const _v = new THREE.Vector3();
 
+// オンライン対戦のスタンプ（味方にだけ見える）
+export const STAMPS = ['ナイス！', 'ありがとう！', '集まれ！', 'ダルマを守って！', '攻めるぞ！', 'ドンマイ！', 'ガハハ！', 'ごめん！'];
+
 export class Hud {
   constructor(root, match, portraits) {
     this.root = root;
@@ -26,6 +29,10 @@ export class Hud {
     this.portraits = portraits;
     root.innerHTML = '';
     root.className = 'hud';
+    // 頭の上の名前とHP
+    this.tagLayer = el('div', 'tags');
+    root.appendChild(this.tagLayer);
+    this.tags = new Map();
     // 上：点数・時間・ミニマップ
     this.top = el('div', 'hud-top');
     this.flagBar = el('div', 'flagbar hidden', '<i class="g0"></i><div class="line"></div><i class="g1"></i><span class="f f0"></span><span class="f f1"></span>');
@@ -133,6 +140,22 @@ export class Hud {
     this.ring = el('div', 'stick-ring', '<div class="knob"></div>');
     root.appendChild(this.ring);
     this.knob = this.ring.querySelector('.knob');
+    // スタンプ（オンライン対戦だけ）
+    if (match.online) {
+      this.stampBtn = el('button', 'stampbtn', '<span>💬</span><small>スタンプ</small>');
+      this.stampBtn.setAttribute('aria-label', 'スタンプ');
+      addHaptic(this.stampBtn);
+      root.appendChild(this.stampBtn);
+      this.stampPal = el('div', 'stamppal hidden', STAMPS.map((t, i) => `<button data-i="${i}">${t}</button>`).join(''));
+      root.appendChild(this.stampPal);
+      this.stampFeed = el('div', 'stampfeed');
+      root.appendChild(this.stampFeed);
+      // 通信の速さ（入った人だけ。ホストは0）
+      if (match.netClient) {
+        this.netEl = el('div', 'netping', '');
+        root.appendChild(this.netEl);
+      }
+    }
     // 狙われているときの矢印
     this.warn = el('div', 'warn-arrows');
     root.appendChild(this.warn);
@@ -164,7 +187,14 @@ export class Hud {
   showBanner(text, team, big) {
     const b = this.banner;
     b.className = 'banner t' + team + (big ? ' big' : '');
-    b.textContent = text;
+    // 2行目（小さい字）は改行で分ける
+    const [main, sub] = String(text).split('\n');
+    b.textContent = main;
+    if (sub) {
+      const sm = document.createElement('small');
+      sm.textContent = sub;
+      b.appendChild(sm);
+    }
     b.style.animation = 'none';
     void b.offsetWidth;
     b.style.animation = '';
@@ -328,6 +358,81 @@ export class Hud {
     } else this.dead.classList.add('hidden');
     // ミニマップ
     if (this.frame % 2 === 0) this.drawMap(me);
+    this.updateTags(dt, cam);
+    if (this.netEl && this.frame % 30 === 0 && M.room) {
+      const ms = Math.round(M.room.hostRtt() || 0);
+      const txt = ms ? '通信 ' + ms + 'ms' : '';
+      if (txt !== this._nt) {
+        this._nt = txt;
+        this.netEl.textContent = txt;
+        this.netEl.className = 'netping' + (ms > 220 ? ' bad' : ms > 120 ? ' mid' : '');
+      }
+    }
+  }
+
+  // 頭の上の名前・HP・スタンプ（近くて、画面に入っている人だけ）
+  updateTags(dt, cam) {
+    const M = this.m, me = M.player;
+    const W = M.viewW, H = M.viewH;
+    for (const p of M.punchers) {
+      let t = this.tags.get(p);
+      if (!t) {
+        const e = el('div', 'ntag t' + p.team + (p === me ? ' me' : ''), '<span class="say"></span><span class="nm"></span><i class="hp"><b></b></i>');
+        this.tagLayer.appendChild(e);
+        t = { e, nm: e.querySelector('.nm'), hp: e.querySelector('.hp b'), say: e.querySelector('.say'), name: '', sayT: 0, vis: null, hpv: -1 };
+        this.tags.set(p, t);
+      }
+      if (t.sayT > 0) {
+        t.sayT -= dt;
+        if (t.sayT <= 0) t.e.classList.remove('saying');
+      }
+      const saying = t.sayT > 0;
+      let show = p.alive && (p !== me || saying);
+      let x = 0, y = 0;
+      if (show) {
+        _v.copy(p.pos);
+        _v.y += 1.7 * (p.model.scale.x || 1);
+        const far = _v.distanceTo(cam.position) > 46;
+        if (far && !saying) show = false;
+        _v.project(cam);
+        if (_v.z > 1 || Math.abs(_v.x) > 1.15 || Math.abs(_v.y) > 1.15) show = false;
+        x = (_v.x * 0.5 + 0.5) * W;
+        y = (-_v.y * 0.5 + 0.5) * H;
+      }
+      if (show !== t.vis) {
+        t.e.style.display = show ? '' : 'none';
+        t.vis = show;
+      }
+      if (!show) continue;
+      t.e.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+      if (p.displayName !== t.name) {
+        t.name = p.displayName;
+        t.nm.textContent = t.name;
+      }
+      const hp = Math.round(clamp(p.hp / p.maxHp, 0, 1) * 100);
+      if (hp !== t.hpv) {
+        t.hpv = hp;
+        t.hp.style.width = hp + '%';
+      }
+    }
+  }
+  // スタンプを頭の上に出す（見えないところの味方は、上にお知らせ）
+  say(p, text) {
+    const t = this.tags.get(p);
+    if (t) {
+      t.say.textContent = text;
+      t.sayT = 2.6;
+      t.e.classList.remove('saying');
+      void t.e.offsetWidth;
+      t.e.classList.add('saying');
+    }
+    if (this.stampFeed && p !== this.m.player && (!t || !t.vis)) {
+      const line = el('div', 'sf t' + p.team);
+      line.textContent = (p.displayName || '') + '：' + text;
+      this.stampFeed.appendChild(line);
+      while (this.stampFeed.children.length > 3) this.stampFeed.firstChild.remove();
+      setTimeout(() => line.remove(), 3000);
+    }
   }
 
   drawMap(me) {
@@ -355,6 +460,7 @@ export class Hud {
       ctx.arc(is.x, is.z, is.R, 0, TAU);
       ctx.fill();
     }
+    for (const r of M.stage.mapRects || []) ctx.fillRect(r.x - r.w / 2, r.z - r.h / 2, r.w, r.h);
     // 場外の線
     const B = M.stage.bounds;
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';

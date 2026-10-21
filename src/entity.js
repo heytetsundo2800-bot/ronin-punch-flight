@@ -396,7 +396,8 @@ export class Puncher {
         yr *= 0.85;
         pr *= 0.85;
       }
-      this.yaw = wrapAngle(this.yaw + yr * dt);
+      // スティック右（指を右へ）＝画面で右へ曲がる。yaw は左回りがプラスなので引く
+      this.yaw = wrapAngle(this.yaw - yr * dt);
       this.pitch = clamp(this.pitch + pr * dt, -MOVE.pitchLimit, MOVE.pitchLimit);
       // ロックオン：相手のほうへ自動で向く
       const L = this.lock;
@@ -408,7 +409,8 @@ export class Puncher {
         this.yaw = angleDamp(this.yaw, ty, k, dt);
         this.pitch = clamp(damp(this.pitch, tp, k, dt), -MOVE.pitchLimit, MOVE.pitchLimit);
       }
-      this.turnVis = damp(this.turnVis, I.stickX, 6, dt);
+      // turnVis は「左へ曲がる＝プラス」（体のかたむき用）
+      this.turnVis = damp(this.turnVis, -I.stickX, 6, dt);
     } else {
       this.turnVis = damp(this.turnVis, 0, 6, dt);
     }

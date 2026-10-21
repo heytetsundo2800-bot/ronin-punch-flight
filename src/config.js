@@ -1,5 +1,5 @@
 // 遊びごこちの数字（ここを変えると操作感がかわる）
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 export const BUILD = '2026-10-21';
 
 export const MATCH_TIME = 180; // 3分
@@ -110,6 +110,20 @@ export const MODES = {
     ],
   },
 };
+
+// ステージ（random は試合のたびにどちらか）
+export const STAGES = {
+  sakura: { key: 'sakura', name: 'サクラ浮島', short: 'サクラ浮島', icon: '🌸', sub: '合格祈願の神社がうかぶ昼の空' },
+  campus: { key: 'campus', name: 'あこがれキャンパス', short: 'キャンパス', icon: '🍂', sub: '夕焼けの大学。時計台と渡り廊下' },
+};
+export const STAGE_KEYS = Object.keys(STAGES);
+export const STAGE_CHOICES = ['random', ...STAGE_KEYS];
+export function stageLabel(k) {
+  return STAGES[k] ? STAGES[k].icon + ' ' + STAGES[k].short : '🎲 おまかせ';
+}
+export function resolveStage(k) {
+  return STAGES[k] ? k : STAGE_KEYS[Math.floor(Math.random() * STAGE_KEYS.length)];
+}
 
 export const DIFFICULTY = {
   easy: { name: 'やさしい', aim: 0.55, react: 0.75, dodge: 0.08, skill: 0.4, dmg: 0.8 },

@@ -15,6 +15,7 @@ export function defaultSave() {
     name: '',
     char: 'tora',
     mode: 'scramble',
+    stage: 'random',
     diff: 'normal',
     decks,
     om,

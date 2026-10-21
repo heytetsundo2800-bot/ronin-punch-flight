@@ -24,7 +24,7 @@ export class Room {
     this.hk = '';
     this.ice = null;
     this.peers = new Map(); // ホスト：相手の id → Peer、入った人：ホストの id → Peer
-    this.state = { mode: 'scramble', diff: 'normal', fill: true, members: [] };
+    this.state = { mode: 'scramble', diff: 'normal', stage: 'random', fill: true, members: [] };
     this.handlers = Object.create(null);
     this.binHandler = null;
     this.closed = false;

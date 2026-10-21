@@ -6,6 +6,9 @@ const _v = new THREE.Vector3();
 const _look = new THREE.Vector3();
 const _want = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+const _alt = new THREE.Vector3();
+const _zero = new THREE.Vector3();
 
 export class FollowCam {
   constructor(cam, world) {
@@ -58,9 +61,24 @@ export class FollowCam {
     const len = _v.length();
     _v.divideScalar(len);
     const pivot = _look.copy(p.pos);
-    pivot.y += 0.6;
-    const hit = this.world.raycast(pivot, _v, len);
-    if (hit < len) _want.copy(pivot).addScaledVector(_v, Math.max(1.2, hit - 0.6));
+    // 頭の上に物があるときは、その下に（カメラの線を物の中から出さない）
+    const upHit = this.world.raycast(p.pos, _up, 0.75);
+    pivot.y += Math.max(0, Math.min(0.6, upHit - 0.15));
+    let hit = this.world.raycast(pivot, _v, len);
+    // 低い天井の下などで、うしろ上がすぐふさがっているときは、まうしろ・少し下からも見てみる
+    if (hit < Math.min(len, 2.2)) {
+      for (const dy of [-0.15, -0.55]) {
+        _alt.set(-Math.sin(this.yaw), dy, -Math.cos(this.yaw)).normalize();
+        const h = this.world.raycast(pivot, _alt, len);
+        if (h > hit + 0.4) {
+          hit = h;
+          _v.copy(_alt);
+          _want.copy(pivot).addScaledVector(_v, len);
+        }
+      }
+    }
+    // 壁がうしろにあるときは、壁の手前まで近づく（壁の中には入らない）
+    if (hit < len) _want.copy(pivot).addScaledVector(_v, Math.max(0.3, hit - 0.45));
     if (_want.y < 1.2) _want.y = 1.2;
     const snapNow = this.first || opts.snap;
     if (snapNow) {
@@ -71,6 +89,20 @@ export class FollowCam {
       this.pos.y = damp(this.pos.y, _want.y, kp, dt);
       this.pos.z = damp(this.pos.z, _want.z, kp, dt);
     }
+    // なめらかに動かした結果が壁の向こうになったら、すぐ手前へ
+    _v.subVectors(this.pos, pivot);
+    const cl = _v.length();
+    if (cl > 0.01) {
+      _v.divideScalar(cl);
+      const h2 = this.world.raycast(pivot, _v, cl + 0.2);
+      if (h2 < cl + 0.2) this.pos.copy(pivot).addScaledVector(_v, Math.max(0.25, h2 - 0.45));
+    }
+    // カメラ自体にも小さな大きさを持たせて、壁すれすれにならないよう押し出す
+    this._hi = this._hi || { ground: false, hitWall: false, wallNormal: new THREE.Vector3(), groundY: 0 };
+    _zero.set(0, 0, 0);
+    this.world.resolveSphere(this.pos, 0.34, _zero, this._hi);
+    // カメラがキャラにくっつくほど近いとき（描くときにキャラを消して前を見えるようにする）
+    this.close = this.pos.distanceTo(pivot) < 1.05;
     // 見る点：キャラより少し前（キャラが画面の下寄りに来る）
     _look.copy(p.pos).addScaledVector(_dir, this.lookAhead);
     _look.y += 1.1 * big;

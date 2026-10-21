@@ -45,7 +45,7 @@ function stateSound(M, p, prev) {
 // ===== ホスト =====
 export class HostMatch extends Match {
   constructor(app, opts, room) {
-    super(app, opts);
+    super(app, { ...opts, online: true, room });
     this.room = room;
     this.online = true;
     this.isHost = true;
@@ -162,6 +162,20 @@ export class HostMatch extends Match {
       return;
     }
     if (o.t === 'act') this.onAct(from, o);
+    if (o.t === 'stamp') {
+      const p = this.punchers.find((q) => q.peer === from);
+      if (p) this.relayStamp(p, o.i | 0);
+    }
+  }
+  sendStamp(i) {
+    this.relayStamp(this.player, i);
+  }
+  relayStamp(p, i) {
+    const now = nowS();
+    if (now - (p.stampAt || 0) < 1.2) return; // 連打しない
+    p.stampAt = now;
+    this.showStamp(p, i);
+    this.room.broadcast({ t: 'stamp', p: p.netId, i });
   }
   onBin(from, buf) {
     let r;
@@ -627,7 +641,7 @@ class ClientSkills extends Skills {
 
 export class ClientMatch extends Match {
   constructor(app, opts, room) {
-    super(app, { ...opts, noBrains: true });
+    super(app, { ...opts, noBrains: true, netClient: true, online: true, room });
     this.room = room;
     this.online = true;
     this.netClient = true;
@@ -666,6 +680,13 @@ export class ClientMatch extends Match {
   act(o) {
     this.room.send({ t: 'act', ...o });
   }
+  sendStamp(i) {
+    const now = nowS();
+    if (now - (this._stampAt || 0) < 1.2) return;
+    this._stampAt = now;
+    this.showStamp(this.player, i);
+    this.room.send({ t: 'stamp', i });
+  }
   sfxLocal(name, src) {
     super.sfx(name, src);
   }
@@ -692,6 +713,10 @@ export class ClientMatch extends Match {
       return;
     }
     if (o.t === 'res') return this.showRes(o);
+    if (o.t === 'stamp') {
+      const p = this.punchers[o.p];
+      if (p && p !== this.player) this.showStamp(p, o.i | 0);
+    }
   }
   onEvents(list) {
     const me = this.player.netId;

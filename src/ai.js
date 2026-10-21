@@ -426,17 +426,38 @@ export class Brain {
     this.lastDist = dist;
     if (this.stuckT > 1.2) {
       this.stuckT = 0;
+      this.stuckTotal = (this.stuckTotal || 0) + 1;
       // 同じ物をねらって2回引っかかったら、しばらくあきらめる（島の下のボールなど）
       this.stuckN = (this.stuckN || 0) + 1;
       if (g.obj && this.stuckN >= 2) {
         this.ignoreSet(g.obj, 7);
         this.stuckN = 0;
       }
-      // 上へぬけてから、別の向きへ
-      p.intent.events.push({ type: 'flick', dir: { x: 0, y: -1 } });
-      this.avoid = new THREE.Vector3(rand(-1, 1), 1.3, rand(-1, 1)).normalize();
-      this.avoidT = 1.0;
-      this.holdOffT = 0.2;
+      this.escape();
+    }
+    // 同じ場所をねらっているのに、なかなか近づけない（島のふちの下で上の物をねらう、など）
+    const wd = this.wd || (this.wd = { tgt: new THREE.Vector3(1e9, 0, 0), best: 1e9, t: 0 });
+    if (wd.tgt.distanceToSquared(target) > 9) {
+      wd.tgt.copy(target);
+      wd.best = dist;
+      wd.t = 0;
+    } else if (dist < wd.best - 1.2) {
+      wd.best = dist;
+      wd.t = 0;
+    } else wd.t += dt;
+    const roam = g.kind === 'fight' || g.kind === 'guard' || g.kind === 'escort' || g.kind === 'guardian';
+    if (!roam && wd.t > 3.5 && dist > (g.arrive || 1) + 1.5) {
+      wd.t = 0;
+      wd.best = dist;
+      this.stuckTotal = (this.stuckTotal || 0) + 1;
+      this.escape();
+      if (g.obj) {
+        // しばらく別の物をねらう（すぐに考え直す）
+        this.ignoreSet(g.obj, 8);
+        this.goal = null;
+        this.think = 0;
+        return;
+      }
     }
     if (this.holdOffT > 0) this.holdOffT -= dt;
     // ぶれ（難しさで変わる）
@@ -451,7 +472,7 @@ export class Brain {
     const ep = clamp(tp, -MOVE.pitchLimit, MOVE.pitchLimit) - p.pitch;
     // ロック中は自動で向くのでスティックは弱め
     const k = p.lock ? 0.6 : 2.6;
-    I.stickX = clamp(ey * k, -1, 1);
+    I.stickX = clamp(-ey * k, -1, 1); // スティック右＝右回り（yaw が減る）
     I.stickY = clamp(ep * k, -1, 1);
     // 大きく向きがちがうときは、止まって向きを変えてから飛ぶ
     const facing = Math.abs(ey) < 1.2 && Math.abs(ep) < 1.0;
@@ -468,6 +489,25 @@ export class Brain {
     }
   }
 }
+
+// 引っかかったときの逃げ道：まわりでいちばんひらけている向きへしばらく飛ぶ
+Brain.prototype.escape = function () {
+  const p = this.p, W = this.m.world;
+  let best = null, bestD = -1;
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 + rand(-0.15, 0.15);
+    const pit = [-0.45, 0, 0.55, 1.1][i % 4];
+    _t.set(Math.sin(a) * Math.cos(pit), Math.sin(pit), Math.cos(a) * Math.cos(pit));
+    const d = W.raycast(p.pos, _t, 26);
+    if (d > bestD + 0.5) {
+      bestD = d;
+      best = _t.clone();
+    }
+  }
+  this.avoid = best || new THREE.Vector3(rand(-1, 1), 0.3, rand(-1, 1)).normalize();
+  this.avoidT = 1.3;
+  this.holdOffT = 0;
+};
 
 export function assignRoles(team) {
   // スピード→集める、アタック→落とす、サポート→守る。かぶったら順番に

@@ -774,7 +774,7 @@ export class RapidBall {
     }
     if (!this.rapidOut && M.timeLeft <= 60) {
       this.rapidOut = true;
-      this.spawnBall(true, new THREE.Vector3(0, 32, 0));
+      this.spawnBall(true, M.stage.rapidSpawn.clone());
     }
     // ダルマの回復と復活
     for (let i = 0; i < 2; i++) {
@@ -820,7 +820,7 @@ export class RapidBall {
           }
           b.pos.x = clamp(b.pos.x, -60, 60);
           b.pos.z = clamp(b.pos.z, -60, 60);
-          b.pos.y = clamp(b.pos.y, 12, 60);
+          b.pos.y = clamp(b.pos.y, 12, M.stage.rapidTop || 60);
         }
         M.world.resolveSphere(b.pos, 0.8, b.vel, (this._hi = this._hi || { ground: false, hitWall: false, wallNormal: new THREE.Vector3() }));
         if (b.noPickT <= 0) {
@@ -866,7 +866,7 @@ export class RapidBall {
       M.scene.remove(b.mesh);
       const i = this.balls.indexOf(b);
       if (i >= 0) this.balls.splice(i, 1);
-      if (b.rapid) setTimeout(() => M.running && this.spawnBall(true, new THREE.Vector3(0, 32, 0)), 1500);
+      if (b.rapid) setTimeout(() => M.running && this.spawnBall(true, M.stage.rapidSpawn.clone()), 1500);
     }
     p.carry.balls = [];
     this.scoreV[p.team] += pts;

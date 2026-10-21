@@ -1,7 +1,7 @@
 // 浪人パンチフライト：アプリ全体（画面の切りかえ・描画のループ）
 import * as THREE from 'three';
 import './styles.css';
-import { VERSION, BUILD, MODES, DIFFICULTY, ELEM, TEAM, rankOf, RANKS } from './config.js';
+import { VERSION, BUILD, MODES, DIFFICULTY, ELEM, TEAM, rankOf, RANKS, STAGES, STAGE_CHOICES, stageLabel, resolveStage } from './config.js';
 import { PUNCHERS, PUNCHER_IDS, OMAMORI, OMAMORI_IDS, KIND_COLOR, RARE_COLOR } from './characters.js';
 import { buildPuncher, poseModel } from './model.js';
 import { Portraits } from './portraits.js';
@@ -30,7 +30,7 @@ class App {
     window.addEventListener('unhandledrejection', (e) => pushErr('promise: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)));
     this.root = $('#app');
     this.save = loadSave();
-    this.settings = Object.assign({ sens: 1, invertY: false, tapSkill: true, quality: 'auto', hand: 'right' }, store.get('rpf_settings', {}));
+    this.settings = Object.assign({ sens: 1, invertX: false, invertY: false, tapSkill: true, quality: 'auto', hand: 'right' }, store.get('rpf_settings', {}));
     this.screenEl = $('#screens');
     this.hudRoot = $('#hud');
     this.fxLayer = $('#fx');
@@ -123,6 +123,7 @@ class App {
   applySettings() {
     this.input.sens = this.settings.sens;
     this.input.invertY = this.settings.invertY;
+    this.input.invertX = !!this.settings.invertX;
     store.set('rpf_settings', this.settings);
   }
 
@@ -164,7 +165,7 @@ class App {
     if (this.match && !this.paused) {
       const n = this.simSpeed || 1; // 自動テストで早送りするとき
       for (let i = 0; i < n && this.match; i++) this.match.update(dt);
-      if (this.match && !this.noRender) this.renderer.render(this.match.scene, this.match.camera);
+      if (this.match && !this.noRender) this.renderMatch();
       // 速いときは集中線
       if (this.match) {
         const P = this.match.player;
@@ -179,11 +180,20 @@ class App {
         }
       }
     } else if (this.match && this.paused) {
-      this.renderer.render(this.match.scene, this.match.camera);
+      this.renderMatch();
     } else if (this.lobby) {
       this.updateLobby(dt);
       if (!this.noRender) this.renderer.render(this.lobby.scene, this.lobby.cam);
     }
+  }
+  // 試合を描く。カメラがキャラにくっついているとき（うしろが壁）はキャラを消して前が見えるように
+  renderMatch() {
+    const m = this.match;
+    const P = m.player;
+    const hide = !!(m.cam && m.cam.close && P && P.model && P.model.visible);
+    if (hide) P.model.visible = false;
+    this.renderer.render(m.scene, m.camera);
+    if (hide) P.model.visible = true;
   }
   adaptQuality(dt) {
     this.fpsAvg = this.fpsAvg ? this.fpsAvg * 0.98 + (1 / dt) * 0.02 : 1 / dt;
@@ -463,6 +473,7 @@ class App {
          <div class="rule"><button class="prev">◀</button><div class="nm"></div><button class="next">▶</button></div>
          <div class="sub"></div>
          <div class="seg diff">${Object.keys(DIFFICULTY).map((k) => `<button data-k="${k}">${DIFFICULTY[k].name}</button>`).join('')}</div>
+         <button class="stagebtn" aria-label="ステージをかえる"><span>ステージ</span><b></b><i>▶</i></button>
        </div>
        <button class="battlebtn">バトル</button>
        <button class="onlinebtn"><b>👥 フレンドとオンライン対戦</b><small>部屋をつくって LINE で招待（ベータ）</small></button>
@@ -505,6 +516,16 @@ class App {
       showDiff();
       sound.play('ui');
     }));
+    const stBtn = $('.stagebtn', s);
+    const showStage = () => ($('b', stBtn).textContent = stageLabel(S.stage));
+    showStage();
+    stBtn.onclick = () => {
+      const i = STAGE_CHOICES.indexOf(STAGE_CHOICES.includes(S.stage) ? S.stage : 'random');
+      S.stage = STAGE_CHOICES[(i + 1) % STAGE_CHOICES.length];
+      saveSave(S);
+      showStage();
+      sound.play('ui');
+    };
     $('.battlebtn', s).onclick = () => {
       sound.play('ui');
       this.startMatch();
@@ -660,6 +681,7 @@ class App {
     this.bindRoom(room);
     room.setOpt('mode', this.save.mode || 'scramble');
     room.setOpt('diff', this.save.diff || 'normal');
+    room.setOpt('stage', STAGE_CHOICES.includes(this.save.stage) ? this.save.stage : 'random');
     this.showRoom();
   }
   async joinRoomFlow(code) {
@@ -807,9 +829,10 @@ class App {
       const M = MODES[st.mode] || MODES.scramble;
       $('.ropts', s).innerHTML = host
         ? `<div class="rule"><button class="prev">◀</button><div class="nm">${M.name}</div><button class="next">▶</button></div>
+           <div class="toggle"><span>ステージ</span><div class="seg stg" style="margin:0;width:200px;background:rgba(255,255,255,0.1)">${STAGE_CHOICES.map((k) => `<button data-k="${k}" class="${(st.stage || 'random') === k ? 'on' : ''}">${k === 'random' ? 'おまかせ' : STAGES[k].short}</button>`).join('')}</div></div>
            <div class="toggle"><span>CPUの強さ</span><div class="seg dif" style="margin:0;width:180px;background:rgba(255,255,255,0.1)">${Object.keys(DIFFICULTY).map((k) => `<button data-k="${k}" class="${st.diff === k ? 'on' : ''}">${DIFFICULTY[k].name}</button>`).join('')}</div></div>
            <label class="toggle"><span>あいた席をCPUで埋める</span><input type="checkbox" class="fill" ${st.fill ? 'checked' : ''}></label>`
-        : `<div class="row sb"><span>ルール</span><b>${M.name}</b></div><div class="row sb"><span>CPU</span><b>${st.fill ? (DIFFICULTY[st.diff] || DIFFICULTY.normal).name : 'なし'}</b></div>`;
+        : `<div class="row sb"><span>ルール</span><b>${M.name}</b></div><div class="row sb"><span>ステージ</span><b>${stageLabel(st.stage)}</b></div><div class="row sb"><span>CPU</span><b>${st.fill ? (DIFFICULTY[st.diff] || DIFFICULTY.normal).name : 'なし'}</b></div>`;
       if (host) {
         const ro = $('.ropts', s);
         $('.prev', ro).onclick = () => {
@@ -821,6 +844,12 @@ class App {
           sound.play('ui');
         };
         $$('.dif button', ro).forEach((b) => (b.onclick = () => room.setOpt('diff', b.dataset.k)));
+        $$('.stg button', ro).forEach((b) => (b.onclick = () => {
+          room.setOpt('stage', b.dataset.k);
+          this.save.stage = b.dataset.k;
+          saveSave(this.save);
+          sound.play('ui');
+        }));
         $('.fill', ro).onchange = (e) => room.setOpt('fill', e.target.checked);
       }
       const me = room.me();
@@ -834,7 +863,7 @@ class App {
     if (!room || room.role !== 'host') return;
     room.inMatch = true;
     room.lock(true);
-    const cfg = { mode: room.state.mode, diff: room.state.diff, roster: room.buildRoster() };
+    const cfg = { mode: room.state.mode, diff: room.state.diff, stage: resolveStage(room.state.stage), roster: room.buildRoster() };
     room.broadcast({ t: 'start', cfg });
     this.startOnline(cfg);
   }
@@ -853,7 +882,7 @@ class App {
     this.screenEl.innerHTML = '';
     this.renderRoom = null;
     this.paused = false;
-    const opts = { mode: MODES[cfg.mode] ? cfg.mode : 'scramble', char: cfg.roster[meIdx].char, difficulty: DIFFICULTY[cfg.diff] ? cfg.diff : 'normal', playerName: this.save.name || 'プレイヤー', roster: cfg.roster, meIdx };
+    const opts = { mode: MODES[cfg.mode] ? cfg.mode : 'scramble', stage: STAGES[cfg.stage] ? cfg.stage : 'sakura', char: cfg.roster[meIdx].char, difficulty: DIFFICULTY[cfg.diff] ? cfg.diff : 'normal', playerName: this.save.name || 'プレイヤー', roster: cfg.roster, meIdx };
     this.match = room.role === 'host' ? new HostMatch(this, opts, room) : new ClientMatch(this, opts, room);
     this.match.resize(this.viewW, this.viewH);
     if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);
@@ -1037,6 +1066,7 @@ class App {
        <div class="card">
          <div class="toggle"><span>ニックネーム：<b class="nm"></b></span><button class="btn small k rename">変える</button></div>
          <div class="field"><span>旋回の速さ <b class="sv"></b></span><input type="range" min="0.5" max="1.6" step="0.05" class="sens"></div>
+         <label class="toggle"><span>左右の操作を反対にする</span><input type="checkbox" class="invx"></label>
          <label class="toggle"><span>上下の操作を反対にする</span><input type="checkbox" class="inv"></label>
          <label class="toggle"><span>スキルをタップでも出す（上フリックでも出る）</span><input type="checkbox" class="tap"></label>
          <div class="field"><span>効果音</span><input type="range" min="0" max="1" step="0.05" class="sfx"></div>
@@ -1070,6 +1100,12 @@ class App {
     inv.checked = st.invertY;
     inv.onchange = () => {
       st.invertY = inv.checked;
+      this.applySettings();
+    };
+    const invx = $('.invx', s);
+    invx.checked = !!st.invertX;
+    invx.onchange = () => {
+      st.invertX = invx.checked;
       this.applySettings();
     };
     const tap = $('.tap', s);
@@ -1187,6 +1223,7 @@ class App {
     const deck = S.decks[S.char];
     this.match = new Match(this, {
       mode: S.mode,
+      stage: resolveStage(S.stage),
       char: S.char,
       difficulty: S.diff,
       playerName: S.name || 'プレイヤー',

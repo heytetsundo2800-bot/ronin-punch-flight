@@ -10,7 +10,7 @@ import { Brain, assignRoles } from './ai.js';
 import { createMode, Guardian } from './modes.js';
 import { FX } from './fx.js';
 import { FollowCam } from './camera.js';
-import { Hud } from './hud.js';
+import { Hud, STAMPS } from './hud.js';
 import { sound } from './audio.js';
 import { shuffle, el, clamp, rand, vibrate } from './util.js';
 import { disposeDeep } from './gfx.js';
@@ -29,8 +29,21 @@ export class Match {
     sun.position.set(60, 120, -80);
     this.scene.add(sun);
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.3, 2200);
-    this.stage = buildStage(this.scene);
+    this.stage = buildStage(this.scene, { id: opts.stage });
     this.world = this.stage.world;
+    // ステージごとの空気（霧・光の色）
+    const env = this.stage.env;
+    if (env) {
+      this.scene.fog.color.setHex(env.fog[0]);
+      this.scene.fog.near = env.fog[1];
+      this.scene.fog.far = env.fog[2];
+      hemi.color.setHex(env.hemi[0]);
+      hemi.groundColor.setHex(env.hemi[1]);
+      hemi.intensity = env.hemi[2];
+      sun.color.setHex(env.sun[0]);
+      sun.intensity = env.sun[1];
+      sun.position.set(...env.sun[2]);
+    }
     this.diff = DIFFICULTY[opts.difficulty || 'normal'];
     this.time = 0;
     this.timeLeft = MATCH_TIME;
@@ -44,6 +57,10 @@ export class Match {
     this.slowScale = 1;
     this.aiReserve = new Map();
     this.playerName = opts.playerName || 'プレイヤー';
+    // オンライン対戦のしるし（HUDを作る前に決めておく）
+    this.online = !!opts.online;
+    this.netClient = !!opts.netClient;
+    if (opts.room) this.room = opts.room;
     this.viewW = app.viewW;
     this.viewH = app.viewH;
     // ダルマ
@@ -95,7 +112,7 @@ export class Match {
     // 開始の演出：上からぐるっと見せる
     this.introCam = { t: 0 };
     sound.playBgm('battle');
-    this.announce(MODES[opts.mode].name, -1, true);
+    this.announce(MODES[opts.mode].name + (this.stage.name ? '\n' + this.stage.name : ''), -1, true);
   }
 
   // オンライン対戦：決まった組み合わせで人を出す
@@ -260,8 +277,32 @@ export class Match {
     };
     dep.addEventListener('pointerup', depUp);
     dep.addEventListener('pointercancel', depUp);
+    // スタンプ（オンライン対戦）
+    if (H.stampBtn) {
+      H.stampBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        H.stampPal.classList.toggle('hidden');
+      });
+      H.stampPal.querySelectorAll('button').forEach((b) =>
+        b.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          H.stampPal.classList.add('hidden');
+          this.sendStamp(+b.dataset.i);
+        })
+      );
+    }
     this.input.ringEl = H.ring;
     this.input.knobEl = H.knob;
+  }
+  sendStamp() {}
+  // スタンプを見せる（味方と自分のだけ）
+  showStamp(p, i) {
+    const text = STAMPS[i];
+    if (!p || !text || p.team !== this.player.team) return;
+    this.hud.say(p, text);
+    sound.play('ui', 0.7);
   }
 
   resize(w, h) {

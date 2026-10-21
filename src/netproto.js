@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OMAMORI, OMAMORI_IDS } from './characters.js';
 import { ELEM } from './config.js';
 
-export const PROTO = 1; // 形を変えたら上げる（ちがう版どうしでは遊べない）
+export const PROTO = 2; // 形を変えたら上げる（ちがう版どうしでは遊べない）
 
 // 状態の番号
 export const STATES = ['hover', 'fly', 'dash', 'cruise', 'step', 'roll', 'brake', 'uturn', 'hurt', 'stun', 'ko', 'special', 'skill'];
