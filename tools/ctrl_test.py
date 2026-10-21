@@ -109,8 +109,12 @@ async def main():
         await pg.wait_for_timeout(150)
         s4 = await st()
         await ev({'type': 'flick', 'dir': {'x': 1, 'y': 0}})
-        await pg.wait_for_timeout(60)
-        s5 = await st()
+        # 次のフレームで受けとる（重い環境ではフレームの間が長いので、少し待つ）
+        for _ in range(20):
+            await pg.wait_for_timeout(30)
+            s5 = await st()
+            if s5['state'] == 'step':
+                break
         check('B side flick stopped -> step', s5['state'] == 'step', s5['state'])
         await pg.wait_for_timeout(400)
         s6 = await st()

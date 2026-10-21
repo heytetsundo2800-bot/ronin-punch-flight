@@ -68,8 +68,12 @@ async def main():
         check('guest put on the other team', 'ゲストくん:1' in bteam, bteam)
         # ゲストがキャラを変える
         await B.click('.charrow button[data-id=aomachi]')
-        await A.wait_for_timeout(1000)
-        ch = await A.evaluate("() => window.__app.room.state.members.find(m => m.name === 'ゲストくん').char")
+        # 重い環境では届くまで少しかかるので、5秒まで待つ
+        for _ in range(25):
+            await A.wait_for_timeout(200)
+            ch = await A.evaluate("() => window.__app.room.state.members.find(m => m.name === 'ゲストくん').char")
+            if ch == 'aomachi':
+                break
         check('guest character change reaches host', ch == 'aomachi', ch)
         # 3人目
         ctxC, C = await dev(b, 'みっつめ', 'tora')
@@ -121,6 +125,60 @@ async def main():
         dist = ((g[0] - h[0]) ** 2 + (g[1] - h[1]) ** 2 + (g[2] - h[2]) ** 2) ** 0.5
         check('guest flew forward', g[2] > 4, g)
         check('host sees guest where guest is (remote-driven)', dist < 3 and h[4], (round(dist, 2), h))
+        # ディスクのモンスター：ホストが使う → ゲストの画面にも出て、技を出して消える
+        # （弾がすぐ何かに当たって消えないように、ひらけた空へ出てから使う）
+        await A.evaluate("() => { const P = window.__app.match.player; P.pos.set(-60, 80, -40); P.vel.set(0, 0, 0); P.yaw = Math.PI / 2; P.lock = null; P.state = 'hover'; P.stunT = 0; P.hurtT = 0; P.charge = null; P.diskLock = 0; P.invuln = 3; P.omamori[0] = 'akahon'; P.omCd[0] = 0; P.useOmamori(0); }")
+        seen = None
+        acted = False
+        for _ in range(40):
+            await B.wait_for_timeout(100)
+            r = await B.evaluate("() => { const m = window.__app.match; const hp = m.punchers.find(p => p.displayName === 'ホストさん'); const s = m.fx.summons.get(hp); return s ? s.phase + ':' + s.g.userData.id : ''; }")
+            if r and not seen:
+                seen = r
+            if r.startswith('act'):
+                acted = True
+                break
+        check('guest sees the host summon a monster', bool(seen) and seen.endswith('drake'), seen)
+        check('guest sees the monster attack', acted)
+        # その弾（ホストの弾）がゲストの画面に見える
+        hshot = None
+        for _ in range(60):
+            await B.wait_for_timeout(100)
+            hshot = await B.evaluate("() => { const m = window.__app.match; for (const q of m.projs.values()) if (!q.mine && q.mesh && q.mesh.visible) return true; return false; }")
+            if hshot:
+                break
+        check("guest sees the host's shot", hshot)
+        # ゲストが使う → ホストの画面に出る（自分の画面では二重に出ない）
+        # （デッキはホストが持っているものを使う。ゲストの1枚目のモンスター）
+        want = await A.evaluate("() => { const m = window.__app.match; const gp = m.punchers.find(p => p.displayName === 'ゲストくん'); return gp.omamori[0]; }")
+        await B.evaluate("() => { const P = window.__app.match.player; P.state = 'hover'; P.charge = null; P.diskLock = 0; P.omCd[0] = 0; P.useOmamori(0); }")
+        mine = await B.evaluate("() => { const m = window.__app.match; const s = m.fx.summons.get(m.player); return s ? s.om.id : ''; }")
+        check('guest sees its own monster at once', mine == want, (mine, want))
+        seenH = None
+        for _ in range(30):
+            await A.wait_for_timeout(100)
+            seenH = await A.evaluate("() => { const m = window.__app.match; const gp = m.punchers.find(p => p.displayName === 'ゲストくん'); const s = m.fx.summons.get(gp); return s ? s.om.id : ''; }")
+            if seenH:
+                break
+        check('host sees the guest summon the same monster', seenH == want, (seenH, want))
+        # テスト用の画面は遅く、試合の時間が実際の時間よりゆっくり進むので、消えるまで待つ
+        left = None
+        for _ in range(60):
+            await B.wait_for_timeout(250)
+            left = await B.evaluate("() => { const m = window.__app.match; const hp = m.punchers.find(p => p.displayName === 'ホストさん'); return [m.fx.summons.has(hp) || m.fx.leaving.some(s => s.p === hp), m.fx.summons.has(m.player) || m.fx.leaving.some(s => s.p === m.player)]; }")
+            if left == [False, False]:
+                break
+        check('monsters go away on the guest screen', left == [False, False], left)
+        # ゲストの弾：自分の弾は「いま」の時刻で表示するので、届いたらすぐ見える
+        await A.evaluate("() => { const m = window.__app.match; const gp = m.punchers.find(p => p.displayName === 'ゲストくん'); gp.omamori[1] = 'akahon'; gp.omCd[1] = 0; }")
+        await B.evaluate("() => { const P = window.__app.match.player; P.pos.set(60, 80, -40); P.vel.set(0, 0, 0); P.yaw = -Math.PI / 2; P.lock = null; P.omamori[1] = 'akahon'; P.omCd[1] = 0; P.state = 'hover'; P.charge = null; P.diskLock = 0; P.useOmamori(1); }")
+        own = None
+        for _ in range(100):
+            await B.wait_for_timeout(100)
+            own = await B.evaluate("() => { const m = window.__app.match; for (const q of m.projs.values()) if (q.mine) return { vis: !!(q.mesh && q.mesh.visible), d: q.mesh ? +q.mesh.position.distanceTo(m.player.pos).toFixed(1) : -1 }; return null; }")
+            if own and own['vis']:
+                break
+        check('guest sees its own shot at once', bool(own) and own['vis'], own)
         # ゲストの攻撃がホストで当たる：敵のCPUのそばへ
         hit = await B.evaluate("""async () => {
             const m = window.__app.match; const P = m.player;

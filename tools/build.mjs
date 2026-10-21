@@ -7,6 +7,11 @@ const out = path.join(root, 'public');
 fs.mkdirSync(out, { recursive: true });
 const dev = process.argv.includes('--dev');
 const ver = Date.now().toString(36);
+// 曲のファイルが変わったときだけ、曲を読みなおす（版の番号＝中身のハッシュ）
+import crypto from 'crypto';
+const mh = crypto.createHash('sha1');
+for (const f of fs.readdirSync(path.join(root, 'web')).filter((f) => f.endsWith('.m4a') || f.endsWith('.mp3')).sort()) mh.update(fs.readFileSync(path.join(root, 'web', f)));
+const mver = mh.digest('hex').slice(0, 8);
 const origin = process.env.ORIGIN || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL : 'https://ronin-punch-flight.vercel.app');
 
 await esbuild.build({
@@ -18,14 +23,14 @@ await esbuild.build({
   outfile: path.join(out, 'app.js'),
   legalComments: 'none',
   logLevel: 'warning',
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: { 'process.env.NODE_ENV': '"production"', __MVER__: JSON.stringify(mver) },
 });
 let html = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
 html = html.replaceAll('__VER__', ver).replaceAll('__ORIGIN__', origin);
 fs.writeFileSync(path.join(out, 'index.html'), html);
 // サービスワーカー（オフラインでも開ける）
 let sw = fs.readFileSync(path.join(root, 'web/sw.js'), 'utf8');
-sw = sw.replaceAll('__VER__', ver);
+sw = sw.replaceAll('__VER__', ver).replaceAll('__MVER__', mver);
 fs.writeFileSync(path.join(out, 'sw.js'), sw);
 for (const f of fs.readdirSync(path.join(root, 'web'))) {
   if (f === 'index.html' || f === 'sw.js') continue;
