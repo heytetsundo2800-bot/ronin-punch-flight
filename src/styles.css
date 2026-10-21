@@ -52,6 +52,14 @@ button {
   overflow: hidden;
   background: #0e1220;
 }
+/* iOS 26 のホーム画面アプリ（Safari から「ホーム画面に追加」）は、画面の高さがステータスバーの分だけ短くなり、
+   いちばん下に何も描けない帯が出る（WebKit の不具合 301108）。ページの高さを画面いっぱいにすると iOS が正しい高さに戻す。
+   min() があるので、正しく出ているときや Safari で開いたときは今までと同じ高さのまま（クルスと同じ直し方） */
+@media (display-mode: standalone) {
+  html {
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top)));
+  }
+}
 #gl {
   position: absolute;
   inset: 0;
