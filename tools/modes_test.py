@@ -2,13 +2,14 @@
 import sys, asyncio, json
 from playwright.async_api import async_playwright
 OUT = '/tmp/claude-0/-home-claude/cb87e6ba-4022-5281-bc59-7be863cc9efb/scratchpad/shots'
+STAGE = sys.argv[1] if len(sys.argv) > 1 else 'sakura'
 async def run(b, mode, char, diff):
     ctx = await b.new_context(viewport={'width': 393, 'height': 852}, device_scale_factor=1, is_mobile=True, has_touch=True)
     pg = await ctx.new_page()
     logs = []
     pg.on('pageerror', lambda e: logs.append('PAGEERROR: ' + str(e)))
     pg.on('console', lambda m: logs.append(m.type + ': ' + m.text) if m.type == 'error' and '404' not in m.text else None)
-    await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'%s', mode:'%s', diff:'%s'}))" % (char, mode, diff))
+    await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'%s', mode:'%s', diff:'%s', stage:'%s'}))" % (char, mode, diff, STAGE))
     await pg.goto('http://localhost:8812/?norender=1')
     await pg.wait_for_timeout(1200)
     await pg.mouse.click(196, 600)
@@ -28,7 +29,7 @@ async def run(b, mode, char, diff):
             break
     res = await pg.evaluate('''() => { const s = document.querySelector('.result'); return s ? s.innerText.slice(0, 200).replace(/\\n+/g,' | ') : null; }''')
     await pg.screenshot(path=f'{OUT}/mode_{mode}_result.png')
-    print(mode, char, diff, '->', json.dumps(snaps[-2] if len(snaps) > 1 else snaps[-1], ensure_ascii=False))
+    print(STAGE, mode, char, diff, '->', json.dumps(snaps[-2] if len(snaps) > 1 else snaps[-1], ensure_ascii=False))
     print('  mid:', json.dumps(snaps[len(snaps)//2], ensure_ascii=False))
     print('  result:', res)
     for l in logs[:10]: print('  ', l)
@@ -40,6 +41,6 @@ async def main():
         ok = []
         for mode, char, diff in [('scramble', 'even', 'normal'), ('flag', 'aomachi', 'hard'), ('ball', 'tora', 'easy')]:
             ok.append(await run(b, mode, char, diff))
-        print('modes ok:', ok)
+        print('modes ok:', ok, STAGE)
         await b.close()
 asyncio.run(main())

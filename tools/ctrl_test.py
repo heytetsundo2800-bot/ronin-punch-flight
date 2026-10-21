@@ -36,7 +36,7 @@ async def main():
         pg = await ctx.new_page()
         logs = []
         pg.on('pageerror', lambda e: logs.append('PAGEERROR: ' + str(e)))
-        await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'tora', mode:'scramble', diff:'easy'}))")
+        await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'tora', mode:'scramble', diff:'easy', stage:'sakura'}))")
         await pg.goto(URL)
         await pg.wait_for_timeout(1500)
         await pg.mouse.click(196, 600)
@@ -73,6 +73,19 @@ async def main():
             await pg.evaluate('(e) => window.__app.match.player.intent.events.push(e)', e)
         async def put(x, y, z):
             await pg.evaluate('([x,y,z]) => { const p = window.__app.match.player; p.pos.set(x,y,z); p.vel.set(0,0,0); p.state="hover"; p.stunT=0; p.hurtT=0; p.dash=null; p.boost=6; }', [x, y, z])
+        # 指を右へ（スティック右）→ 画面の中で右へ向く／左へ → 左へ（止まっているときも飛んでいるときも）
+        TURN = '''([sx, hold]) => new Promise((res) => {
+          const m = window.__app.match, P = m.player, I = window.__app.input, V = P.pos.constructor;
+          P.pos.set(0, 50, -40); P.vel.set(0, 0, 0); P.state = 'hover'; P.yaw = 0.3; P.pitch = 0; P.lock = null; P.updateAxes();
+          const camR = new V(1, 0, 0).applyQuaternion(m.camera.quaternion); camR.y = 0; camR.normalize();
+          I._s = I.sample; I.sample = function () { this._s(); this.hold = hold; this.stickX = sx; this.stickY = 0; };
+          setTimeout(() => { I.sample = I._s; const f = new V(Math.sin(P.yaw), 0, Math.cos(P.yaw)); res(+f.dot(camR).toFixed(2)); }, 500);
+        })'''
+        for name, sx, hold, sign in [('stopped right', 1, False, 1), ('stopped left', -1, False, -1), ('flying right', 0.8, True, 1), ('flying left', -0.8, True, -1)]:
+            await pg.evaluate('() => { const P = window.__app.match.player; P.yaw = 0.3; P.updateAxes(); }')
+            await pg.wait_for_timeout(450)
+            d = await pg.evaluate(TURN, [sx, hold])
+            check('B stick ' + name + ' -> turns that way on screen', d * sign > 0.15, d)
         await put(0, 50, -40)
         await pg.wait_for_timeout(200)
         s0 = await st()
@@ -154,8 +167,9 @@ async def main():
         wk = await pg.evaluate('() => { const p = window.__app.match.player; return {yaw: p.yaw, z: p.pos.z, state: p.state}; }')
         check('B dash into wall -> wall kick (turns back)', abs(abs(((wk['yaw'] - 3.14159) + 3.14159) % 6.28318 - 3.14159)) > 1.5 or wk['z'] < -60, wk)
         # 地面でブーストが早く回復
-        await pg.evaluate('''() => { const p = window.__app.match.player; p.pos.set(0, 27, -96); p.vel.set(0,-1,0); p.boost = 1; p.state = 'hover'; }''')
-        await pg.wait_for_timeout(1200)
+        await pg.evaluate('''() => { const m = window.__app.match, p = m.player; p.pos.set(0, 27, -96); p.vel.set(0,-1,0); p.boost = 1; p.state = 'hover'; window.__t0 = m.time; }''')
+        # ゲームの中の時間で1.2秒待つ（遅い環境でもくらべられるように）
+        await pg.wait_for_function('() => window.__app.match.time - window.__t0 >= 1.2', timeout=8000)
         s16 = await st()
         check('B ground recharges boost fast (~2/s)', s16['ground'] and s16['boost'] > 2.4, (s16['ground'], round(s16['boost'], 2)))
         # 地面で長押し → 走る（高さはそのまま）

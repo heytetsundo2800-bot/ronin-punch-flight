@@ -6,6 +6,7 @@ from playwright.async_api import async_playwright
 U = 'http://127.0.0.1:8813/'
 OUT = '/tmp/claude-0/-home-claude/cb87e6ba-4022-5281-bc59-7be863cc9efb/scratchpad/shots'
 MODE = sys.argv[1] if len(sys.argv) > 1 else 'scramble'
+STAGE = sys.argv[2] if len(sys.argv) > 2 else 'sakura'
 results = []
 
 
@@ -16,7 +17,7 @@ def check(name, ok, info=''):
 
 async def dev(b, name, char, extra=''):
     ctx = await b.new_context(viewport={'width': 393, 'height': 852}, is_mobile=True, has_touch=True)
-    save = {'name': name, 'tutorial': True, 'char': char, 'mode': MODE, 'diff': 'easy'}
+    save = {'name': name, 'tutorial': True, 'char': char, 'mode': MODE, 'diff': 'easy', 'stage': STAGE}
     await ctx.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify(%s)); window.__rpfNetDebug = true;" % json.dumps(save, ensure_ascii=False))
     pg = await ctx.new_page()
     pg.errs = []
@@ -91,12 +92,18 @@ async def main():
         if n != 3:
             for nm, pg in (('A', A), ('B', B), ('C', C)):
                 print(nm, 'roomlog:', await pg.evaluate("() => (window.__app.room && window.__app.room.log) || window.__app.lastRoomLog"))
+        await A.click(f'.stg button[data-k="{STAGE}"]')
+        await A.wait_for_timeout(900)
+        gtxt = await B.evaluate("() => (document.querySelector('.ropts') || document.body).innerText")
+        check('guest lobby shows the stage', ('サクラ浮島' if STAGE == 'sakura' else 'キャンパス') in gtxt, gtxt.replace('\n', ' | ')[:120])
         await A.screenshot(path=f'{OUT}/online_lobby.png')
         # スタート
         await A.click('.start')
         for pg in (A, B, C):
             await pg.wait_for_function("() => window.__app.match && window.__app.match.phase === 'play'", timeout=40000)
         check('all three reached play', True)
+        sids = [await pg.evaluate("() => window.__app.match.stage.id") for pg in (A, B, C)]
+        check('everyone plays on the same stage', sids[0] == sids[1] == sids[2] == STAGE, sids)
         info = await B.evaluate("() => { const m = window.__app.match; return {n: m.punchers.length, me: m.player.displayName, team: m.player.team, client: !!m.netClient, humans: m.punchers.filter(p => p.human).map(p => p.displayName)} }")
         check('guest is a client with 8 punchers', info['n'] == 8 and info['client'] and info['me'] == 'ゲストくん', info)
         # 位置が同じか（ホストのキャラ：ホストの本当の位置とゲストに見えている位置）
@@ -176,6 +183,13 @@ async def main():
         sp = await A.evaluate("(gid) => { const p = window.__app.match.punchers[gid]; return [p.sp, p.stats.sp, p.state]; }", gid)
         check('guest special runs on host', sp[1] >= 1, sp)
         sps = await B.evaluate("() => window.__app.match.player.state")
+        # スタンプ：3人目（ホストと同じ青チーム）→ ホストに見える、赤チームのゲストには見えない
+        await C.evaluate("() => window.__app.match.sendStamp(0)")
+        await A.wait_for_timeout(1200)
+        cid = await C.evaluate("() => window.__app.match.player.netId")
+        sa = await A.evaluate("(cid) => { const t = window.__app.match.hud.tags.get(window.__app.match.punchers[cid]); return t ? [t.sayT > 0, t.say.textContent] : null; }", cid)
+        sb = await B.evaluate("(cid) => { const t = window.__app.match.hud.tags.get(window.__app.match.punchers[cid]); return t ? t.sayT > 0 : false; }", cid)
+        check('team stamp reaches teammate only', sa and sa[0] and sa[1] == 'ナイス！' and not sb, (sa, sb))
         await A.screenshot(path=f'{OUT}/online_host.png')
         await B.screenshot(path=f'{OUT}/online_guest.png')
         # 終わらせる
@@ -218,7 +232,7 @@ async def main():
         check('guest returns home when host closes', back)
         errs = [e for e in A.errs + B.errs + C.errs if '429' not in e]  # 429 はテストで登録しすぎたときの回数制限
         check('no page errors', not errs, errs[:5])
-        print(f'online e2e ({MODE}): {sum(results)}/{len(results)} passed')
+        print(f'online e2e ({MODE}, {STAGE}): {sum(results)}/{len(results)} passed')
         await b.close()
 
 asyncio.run(main())
