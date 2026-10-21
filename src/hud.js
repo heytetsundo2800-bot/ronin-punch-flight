@@ -4,6 +4,7 @@ import { TEAM, ELEM, MOVE, COMBAT } from './config.js';
 import { OMAMORI, KIND_COLOR, RARE_COLOR } from './characters.js';
 import { BOOST_SEGS, SP_SEGS } from './entity.js';
 import { el, fmtTime, clamp, TAU, isIOS } from './util.js';
+import { ICON } from './icons.js';
 
 // iPhone（iOS 18 以降）は、スイッチの切りかえで本体がブルッとする。透明なスイッチをボタンに重ねる
 function addHaptic(btn) {
@@ -97,16 +98,22 @@ export class Hud {
       const isKS = s === 2;
       const b = el('button', 'slot' + (isKS ? ' ks' : ''));
       if (isKS) {
-        b.innerHTML = `<img alt=""><b class="cd"></b><i class="up">▲</i>`;
+        b.innerHTML = `<div class="disc ksd"><i class="cdr"></i><img alt=""></div><b class="cd"></b><span class="kind">SKILL</span><i class="up">${ICON.up}</i>`;
         b.querySelector('img').src = portraits.get(me.def.id, me.team);
       } else {
         const oi = s < 2 ? s : s - 1;
         const om = OMAMORI[me.omamori[oi]];
-        b.innerHTML = `<div class="omg" style="--k:${KIND_COLOR[om.kind]};--e:${ELEM[om.elem].color}"><span class="ic">${om.icon}</span><span class="rare" style="color:${RARE_COLOR[om.rare]}">${om.rare}</span></div><b class="cd"></b><span class="kind" style="background:${KIND_COLOR[om.kind]}">${om.kind}</span><i class="up">▲</i>`;
+        b.style.setProperty('--e', ELEM[om.elem].color);
+        b.style.setProperty('--k', KIND_COLOR[om.kind]);
+        b.style.setProperty('--r', RARE_COLOR[om.rare]);
+        b.innerHTML = `<div class="disc"><i class="cdr"></i><img alt=""><span class="rare">${om.rare}</span></div><b class="cd"></b><span class="kind">${om.kind}</span><i class="up">${ICON.up}</i>`;
+        const im = b.querySelector('img');
+        im.src = portraits.monster(om.mon, 128);
+        b.setAttribute('aria-label', om.name + '：' + om.move);
       }
       addHaptic(b);
       this.deck.appendChild(b);
-      this.slots.push({ b, cd: b.querySelector('.cd'), slot: s, last: '' });
+      this.slots.push({ b, cd: b.querySelector('.cd'), slot: s, last: '', lp: -1 });
     }
     this.spBtn = el('button', 'spbtn', '<svg viewBox="0 0 64 64"></svg><b>SP</b>');
     this.spSvg = this.spBtn.querySelector('svg');
@@ -142,7 +149,7 @@ export class Hud {
     this.knob = this.ring.querySelector('.knob');
     // スタンプ（オンライン対戦だけ）
     if (match.online) {
-      this.stampBtn = el('button', 'stampbtn', '<span>💬</span><small>スタンプ</small>');
+      this.stampBtn = el('button', 'stampbtn', `<span>${ICON.chat}</span><small>スタンプ</small>`);
       this.stampBtn.setAttribute('aria-label', 'スタンプ');
       addHaptic(this.stampBtn);
       root.appendChild(this.stampBtn);
@@ -169,7 +176,7 @@ export class Hud {
     const me = this.m.player;
     const side = p.team === me.team ? 0 : 1;
     const row = el('div', 'mem t' + p.team + (p === me ? ' me' : ''));
-    row.innerHTML = `<div class="face"><img alt=""><b class="x">✕</b></div><div class="info"><div class="hp"><i></i></div><div class="carry"><span>0</span></div></div>`;
+    row.innerHTML = `<div class="face"><img alt=""><b class="x">${ICON.close}</b></div><div class="info"><div class="hp"><i></i></div><div class="carry"><span>0</span></div></div>`;
     row.querySelector('img').src = this.portraits.get(p.def.id, p.team);
     this.cols[side].appendChild(row);
     this.rows.set(p, { row, hp: row.querySelector('.hp i'), carry: row.querySelector('.carry span'), carryBox: row.querySelector('.carry'), last: '' });
@@ -258,12 +265,15 @@ export class Hud {
     }
     // スキルのクールタイム
     for (const s of this.slots) {
-      let cd = 0, ready = true, extra = '';
+      let cd = 0, ready = true, extra = '', full = 1;
       if (s.slot === 2) {
         cd = me.ksCd;
+        full = me.def.skill.cd || 1;
       } else {
         const oi = s.slot < 2 ? s.slot : s.slot - 1;
         cd = me.omCd[oi];
+        const lv = (me.omLv && me.omLv[oi]) || 1;
+        full = OMAMORI[me.omamori[oi]].cd * (1 - (lv - 1) * 0.04) || 1;
         if (me.charge && me.charge.slot === oi) extra = ' charging';
         if (me.diskLock > 0) ready = false;
         const om = OMAMORI[me.omamori[oi]];
@@ -271,6 +281,12 @@ export class Hud {
       }
       if (cd > 0) ready = false;
       if (!me.alive || me.charge) ready = false;
+      // 待ち時間の輪（残りの割合）
+      const pr = cd > 0 ? Math.round(clamp(cd / full, 0, 1) * 60) / 60 : 0;
+      if (pr !== s.lp) {
+        s.lp = pr;
+        s.b.style.setProperty('--p', pr);
+      }
       const key = Math.ceil(cd) + '|' + ready + extra;
       if (key !== s.last) {
         s.last = key;
@@ -445,7 +461,7 @@ export class Hud {
     ctx.beginPath();
     ctx.arc(R, R, R - 1, 0, TAU);
     ctx.clip();
-    ctx.fillStyle = 'rgba(12,16,28,0.82)';
+    ctx.fillStyle = 'rgba(5,9,20,0.84)';
     ctx.fillRect(0, 0, S, S);
     // 自分が上を向くように回す
     const scale = (R * 0.95) / 105;
@@ -537,8 +553,18 @@ export class Hud {
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(R, R, R - 1.5, 0, TAU);
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(110,225,255,0.75)';
+    ctx.lineWidth = 1.5 * this.mapScale;
     ctx.stroke();
+    // 目盛り
+    ctx.strokeStyle = 'rgba(110,225,255,0.45)';
+    ctx.lineWidth = 1 * this.mapScale;
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * TAU, r0 = R - (i % 6 === 0 ? 7 : 4) * this.mapScale;
+      ctx.beginPath();
+      ctx.moveTo(R + Math.cos(a) * r0, R + Math.sin(a) * r0);
+      ctx.lineTo(R + Math.cos(a) * (R - 2), R + Math.sin(a) * (R - 2));
+      ctx.stroke();
+    }
   }
 }

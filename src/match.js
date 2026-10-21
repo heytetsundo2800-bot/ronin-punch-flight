@@ -8,12 +8,13 @@ import { Combat } from './combat.js';
 import { Skills } from './skills.js';
 import { Brain, assignRoles } from './ai.js';
 import { createMode, Guardian } from './modes.js';
-import { FX } from './fx.js';
+import { FX, projectileLook } from './fx.js';
 import { FollowCam } from './camera.js';
 import { Hud, STAMPS } from './hud.js';
 import { sound } from './audio.js';
 import { shuffle, el, clamp, rand, vibrate } from './util.js';
 import { disposeDeep } from './gfx.js';
+import { buildMonster } from './monsters.js';
 
 const _v = new THREE.Vector3();
 
@@ -113,6 +114,21 @@ export class Match {
     this.introCam = { t: 0 };
     sound.playBgm('battle');
     this.announce(MODES[opts.mode].name + (this.stage.name ? '\n' + this.stage.name : ''), -1, true);
+    this.prewarm();
+  }
+
+  // この試合で出るモンスターと技の弾を、先に GPU で準備しておく（はじめて出たときに一瞬止まらないように）
+  prewarm() {
+    const R = this.app.renderer;
+    if (!R || this.app.noRender || typeof R.compile !== 'function') return;
+    try {
+      const g = new THREE.Group();
+      const mons = new Set(['beetle']); // ボムビートル（罠）
+      for (const p of this.punchers) for (const id of p.omamori || []) if (OMAMORI[id] && OMAMORI[id].mon) mons.add(OMAMORI[id].mon);
+      for (const m of mons) g.add(buildMonster(m));
+      for (const k of ['akahon', 'tangocho', 'pencil']) g.add(projectileLook(k));
+      R.compile(g, this.camera, this.scene);
+    } catch (e) {}
   }
 
   // オンライン対戦：決まった組み合わせで人を出す
@@ -217,7 +233,7 @@ export class Match {
         if (L.target) this.player.intent.events.push({ type: 'lock', target: L.target });
       });
     });
-    // スキル：上フリックで発動（タップでも可）、お守りは下フリックで属性を変える
+    // スキル：上フリックで発動（タップでも可）、ディスクは下フリックで属性を変える
     H.slots.forEach((s) => {
       let y0 = 0, t0 = 0, id = null;
       s.b.addEventListener('pointerdown', (e) => {

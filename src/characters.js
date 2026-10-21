@@ -1,9 +1,9 @@
-// パンチャー（キャラ）とお守り（スキルの道具）のデータ
+// パンチャー（キャラ）とディスク（モンスターの技）のデータ
 export const PUNCHERS = {
   tora: {
     id: 'tora',
-    name: 'トラ',
-    en: 'TORA',
+    name: 'ドラ',
+    en: 'DORA',
     type: 'attack',
     typeName: 'アタック',
     elem: 'fire',
@@ -14,8 +14,8 @@ export const PUNCHERS = {
     speed: 1.0,
     stat: { atk: 5, hp: 3, spd: 3 },
     attack: { kind: 'melee', range: 3.5, dmg: [230, 230, 390], gap: [0.34, 0.34, 0.6], heavyAt: 2 },
-    skill: { id: 'tigerRush', name: 'タイガーラッシュ', cd: 9, desc: '前に突進しながらパンチの連打。最後にふっとばす' },
-    special: { id: 'roar', name: '虎の大爆笑', desc: '大爆笑の衝撃波で、まわりの敵にダメージとスタン' },
+    skill: { id: 'tigerRush', name: 'ドラ・ラッシュ', cd: 9, desc: '前に突進しながらパンチの連打。最後にふっとばす' },
+    special: { id: 'roar', name: 'ドラの大爆笑', desc: '大爆笑の衝撃波で、まわりの敵にダメージとスタン' },
     omamori: ['akahon', 'hachimaki', 'drink', 'jet'],
     look: {
       skin: 0xf2c4a0,
@@ -70,9 +70,9 @@ export const PUNCHERS = {
   },
   aomachi: {
     id: 'aomachi',
-    name: '青町オーシャンTV',
-    short: '青町',
-    en: 'AOMACHI OCEAN TV',
+    name: 'アオッチOcean TV',
+    short: 'アオッチ',
+    en: 'AOCCHI OCEAN TV',
     type: 'support',
     typeName: 'サポート',
     elem: 'water',
@@ -106,23 +106,24 @@ export const PUNCHERS = {
 };
 export const PUNCHER_IDS = ['tora', 'even', 'aomachi'];
 
-// お守り（キックフライトのディスクにあたる）
+// ディスク（キックフライトと同じ。モンスターの技をキャラに付ける。id は昔のセーブと合わせるため変えない）
 export const OMAMORI = {
-  akahon: { id: 'akahon', name: '赤本ミサイル', kind: 'ATK', elem: 'fire', rare: 'R', cd: 12, icon: '本', desc: 'ねらった敵を追いかける赤本。当たると爆発' },
-  tangocho: { id: 'tangocho', name: '単語帳ブーメラン', kind: 'ATK', elem: 'wind', rare: 'R', cd: 10, icon: '単', desc: '回る単語帳が行って帰ってくる。何回も当たる' },
-  pencil: { id: 'pencil', name: 'Gペンロケット', kind: 'ATK', elem: 'water', rare: 'N', cd: 8, icon: 'ペ', desc: 'マンガ用のGペンが、まっすぐ速く飛んでいく' },
-  drink: { id: 'drink', name: '栄養ドリンク', kind: 'HEAL', elem: 'water', rare: 'N', cd: 18, icon: '回', desc: 'HPを30%回復' },
-  eyemask: { id: 'eyemask', name: 'ホットアイマスク', kind: 'HEAL', elem: 'wind', rare: 'R', cd: 22, icon: '癒', desc: '自分と近くの味方を5秒かけて回復' },
-  hachimaki: { id: 'hachimaki', name: '必勝ハチマキ', kind: 'BUFF', elem: 'fire', rare: 'SR', cd: 20, icon: '必', desc: '8秒間、攻撃力アップ' },
-  coffee: { id: 'coffee', name: 'ブラックコーヒー', kind: 'BUFF', elem: 'wind', rare: 'N', cd: 16, icon: '速', desc: '6秒間スピードアップ＋ブースト回復' },
-  shield: { id: 'shield', name: '合格祈願バリア', kind: 'BUFF', elem: 'water', rare: 'SR', cd: 22, icon: '守', desc: 'ダメージを受け止めるバリアをはる' },
-  keshigomu: { id: 'keshigomu', name: '消しゴム地雷', kind: 'TRAP', elem: 'fire', rare: 'R', cd: 14, icon: '罠', desc: 'その場に地雷。近づいた敵を爆発でスタン' },
-  marksheet: { id: 'marksheet', name: 'マークシート結界', kind: 'TRAP', elem: 'water', rare: 'SR', cd: 20, icon: '結', desc: '入った敵がおそくなる結界をはる' },
-  warp: { id: 'warp', name: '自習室ワープ', kind: 'WARP', elem: 'wind', rare: 'SR', cd: 18, icon: '瞬', desc: '前へ瞬間移動する' },
-  homewarp: { id: 'homewarp', name: '帰宅ワープ', kind: 'WARP', elem: 'water', rare: 'R', cd: 28, icon: '帰', desc: '自分のチームのダルマの前に瞬間移動' },
-  jet: { id: 'jet', name: 'ジェットスニーカー', kind: 'MOVE', elem: 'fire', rare: 'N', cd: 10, icon: '翔', desc: '大きくダッシュ。そのあいだは無敵' },
-  fuwa: { id: 'fuwa', name: 'ふわふわ回避', kind: 'MOVE', elem: 'wind', rare: 'R', cd: 12, icon: '浮', desc: 'ブーストを全回復して、少しのあいだ無敵' },
+  akahon: { id: 'akahon', name: 'ブレイズドレイク', mon: 'drake', move: 'ホーミングフレア', kind: 'ATK', elem: 'fire', rare: 'R', cd: 12, icon: '竜', desc: 'ねらった敵を追いかける火の玉。当たると爆発する' },
+  tangocho: { id: 'tangocho', name: 'ゲイルファルコン', mon: 'falcon', move: 'ゲイルブーメラン', kind: 'ATK', elem: 'wind', rare: 'R', cd: 10, icon: '隼', desc: '回るかまいたちが行って帰ってくる。何回も当たる' },
+  pencil: { id: 'pencil', name: 'ランスナーヴァル', mon: 'narwhal', move: 'アクアランス', kind: 'ATK', elem: 'water', rare: 'N', cd: 8, icon: '槍', desc: '水の槍が、まっすぐ速く飛んでいく' },
+  drink: { id: 'drink', name: 'ヒールジェリー', mon: 'jelly', move: 'ヒールバブル', kind: 'HEAL', elem: 'water', rare: 'N', cd: 18, icon: '癒', desc: 'HPを30%回復する' },
+  eyemask: { id: 'eyemask', name: 'スリープアウル', mon: 'owl', move: 'ムーンララバイ', kind: 'HEAL', elem: 'wind', rare: 'R', cd: 22, icon: '月', desc: '自分と近くの味方を、5秒かけて回復する' },
+  hachimaki: { id: 'hachimaki', name: 'ブレイブレオ', mon: 'lion', move: 'ブレイブロア', kind: 'BUFF', elem: 'fire', rare: 'SR', cd: 20, icon: '獅', desc: '8秒間、攻撃力アップ' },
+  coffee: { id: 'coffee', name: 'ブリッツチーター', mon: 'cheetah', move: 'ブリッツアクセル', kind: 'BUFF', elem: 'wind', rare: 'N', cd: 16, icon: '速', desc: '6秒間スピードアップ＋ブースト回復' },
+  shield: { id: 'shield', name: 'アイギスタートル', mon: 'tortoise', move: 'アイギスシェル', kind: 'BUFF', elem: 'water', rare: 'SR', cd: 22, icon: '盾', desc: 'ダメージを受け止めるバリアをはる' },
+  keshigomu: { id: 'keshigomu', name: 'ボムビートル', mon: 'beetle', move: 'ビートルボム', kind: 'TRAP', elem: 'fire', rare: 'R', cd: 14, icon: '爆', desc: 'その場に爆弾虫を置く。近づいた敵を爆発でスタン' },
+  marksheet: { id: 'marksheet', name: 'グリッドオクトパス', mon: 'octopus', move: 'グリッドフィールド', kind: 'TRAP', elem: 'water', rare: 'SR', cd: 20, icon: '網', desc: '入った敵がおそくなる、方眼の結界をはる' },
+  warp: { id: 'warp', name: 'フェイズフォックス', mon: 'fox', move: 'フェイズシフト', kind: 'WARP', elem: 'wind', rare: 'SR', cd: 18, icon: '瞬', desc: '前へ瞬間移動する' },
+  homewarp: { id: 'homewarp', name: 'ホタルゲート', mon: 'firefly', move: 'ホームゲート', kind: 'WARP', elem: 'water', rare: 'R', cd: 28, icon: '門', desc: '自分のチームのダルマの前に瞬間移動' },
+  jet: { id: 'jet', name: 'ロケットボア', mon: 'boar', move: 'ロケットチャージ', kind: 'MOVE', elem: 'fire', rare: 'N', cd: 10, icon: '突', desc: '大きくダッシュ。そのあいだは無敵' },
+  fuwa: { id: 'fuwa', name: 'スカイスワロー', mon: 'swallow', move: 'スカイステップ', kind: 'MOVE', elem: 'wind', rare: 'R', cd: 12, icon: '燕', desc: 'ブーストを全回復して、少しのあいだ無敵' },
 };
 export const OMAMORI_IDS = Object.keys(OMAMORI);
+export const KIND_NAME = { ATK: 'アタック', HEAL: 'ヒール', BUFF: 'ブースト', TRAP: 'トラップ', WARP: 'ワープ', MOVE: 'ムーブ' };
 export const KIND_COLOR = { ATK: '#ff5a5a', HEAL: '#46d68c', BUFF: '#ffc93c', TRAP: '#c77dff', WARP: '#4cc9f0', MOVE: '#ff9f43' };
 export const RARE_COLOR = { N: '#9aa4b2', R: '#5fb3ff', SR: '#ffcf4a', UR: '#ff6ad5' };

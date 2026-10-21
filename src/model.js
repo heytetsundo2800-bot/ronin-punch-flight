@@ -242,7 +242,7 @@ export function buildPuncher(def, teamIdx) {
   badge.position.set(0.075, 0.36, 0.165 * look.build);
   spine.add(badge);
   if (look.extra === 'tigerBand') {
-    // トラ：白T の下に茶色の長袖（首まわり）
+    // ドラ：白T の下に茶色の長袖（首まわり）
     const collar = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.022, 6, 16), toon(look.sleeve));
     collar.rotation.x = Math.PI / 2;
     collar.position.y = 0.56;

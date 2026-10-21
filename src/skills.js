@@ -1,6 +1,7 @@
-// スキル：パンチャースキル（KS）・スペシャル（SS）・お守り（ディスク）
+// スキル：パンチャースキル（KS）・スペシャル（SS）・ディスク（モンスターの技）
 import * as THREE from 'three';
 import { OMAMORI } from './characters.js';
+import { monsterMouth } from './monsters.js';
 import { MOVE, COMBAT } from './config.js';
 import { clamp } from './util.js';
 
@@ -145,21 +146,38 @@ export class Skills {
     if (p.model.userData.glasses) p.model.userData.glasses.visible = true;
   }
 
-  // ===== お守り =====
+  // モンスターの口（技が出るところ）から、ねらう方向
+  mouthAim(p, om, out) {
+    const o = monsterMouth(p, om.mon, new THREE.Vector3());
+    // キャラとモンスターのあいだに壁があるときは、キャラの前から出す
+    _v2.subVectors(o, p.pos);
+    const d = _v2.length();
+    if (d > 0.01 && this.match.world && this.match.world.raycast) {
+      _v2.divideScalar(d);
+      if (this.match.world.raycast(p.pos, _v2, d + 0.6) < d + 0.4) o.copy(p.pos).addScaledVector(p.forward, 1.2);
+    }
+    const L = p.lock && p.lock.alive ? p.lock : this.match.combat.pickTarget(p);
+    if (L) out.subVectors(L.pos, o).normalize();
+    else out.copy(p.forward);
+    return { o, t: L || null };
+  }
+
+  // ===== ディスク（モンスターがキャラの横に出て、技を出す）=====
   fireOmamori(p, id, slot) {
     const M = this.match;
     const om = OMAMORI[id];
     if (!p.alive) return;
-    M.fx.skillName && M.fx.skillName(p, om.name, om);
+    M.fx.skillName && M.fx.skillName(p, om.move || om.name, om);
+    M.fx.summonAct && M.fx.summonAct(p, id);
     p.stats.om++;
     const lv = (p.omLv && p.omLv[slot]) || 1;
     const atk = p.def.atk * (1 + (lv - 1) * 0.08);
     switch (id) {
       case 'akahon': {
-        const t = this.aimDir(p, _v);
+        const { o, t } = this.mouthAim(p, om, _v);
         M.combat.spawnProjectile({
           owner: p,
-          pos: p.pos.clone().addScaledVector(_v, 1.2).add(new THREE.Vector3(0, 0.6, 0)),
+          pos: o,
           vel: _v.clone().multiplyScalar(24),
           dmg: 420 * atk,
           radius: 0.8,
@@ -174,10 +192,10 @@ export class Skills {
         break;
       }
       case 'tangocho': {
-        this.aimDir(p, _v);
+        const { o } = this.mouthAim(p, om, _v);
         M.combat.spawnProjectile({
           owner: p,
-          pos: p.pos.clone().addScaledVector(_v, 1.0),
+          pos: o,
           vel: _v.clone().multiplyScalar(30),
           dmg: 150 * atk,
           radius: 1.3,
@@ -192,10 +210,10 @@ export class Skills {
         break;
       }
       case 'pencil': {
-        const t = this.aimDir(p, _v);
+        const { o, t } = this.mouthAim(p, om, _v);
         M.combat.spawnProjectile({
           owner: p,
-          pos: p.pos.clone().addScaledVector(_v, 1.0),
+          pos: o,
           vel: _v.clone().multiplyScalar(58),
           dmg: 340 * atk,
           radius: 0.6,

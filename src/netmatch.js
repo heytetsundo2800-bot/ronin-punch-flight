@@ -22,10 +22,10 @@ const INTERP = 0.11; // ほかの人を何秒おくれて表示するか（な�
 const READY_WAIT = 12; // みんなの準備を待つ最長（秒）
 
 // 記録して、みんなの画面でも同じように見せるもの
-const FX_REC = new Set(['hit', 'healNum', 'miss', 'shieldHit', 'shock', 'boom', 'puff', 'pickup', 'scatter', 'deposit', 'wallKick', 'flash', 'dizzy', 'hearts', 'sparkle', 'laughs', 'healFx', 'buffFx', 'warpFx', 'elemSwitch', 'chargeIcon', 'chargeBreak', 'skillName']);
+const FX_REC = new Set(['hit', 'healNum', 'miss', 'shieldHit', 'shock', 'boom', 'puff', 'pickup', 'scatter', 'deposit', 'wallKick', 'flash', 'dizzy', 'hearts', 'sparkle', 'laughs', 'healFx', 'buffFx', 'warpFx', 'elemSwitch', 'chargeIcon', 'chargeBreak', 'skillName', 'summonAct']);
 const REPLAY = new Set(['koFeedback', 'respawnFeedback', 'justFeedback', 'hitFeedback', 'announce', 'alertGuardian', 'cutin', 'sfx', 'shake']);
 // 本人の端末ではすでに出しているので、もう一度は出さないもの
-const SELF_SKIP = new Set(['sfx:charge', 'fx.chargeIcon', 'sfx:elem', 'fx.elemSwitch', 'sfx:shot']);
+const SELF_SKIP = new Set(['sfx:charge', 'fx.chargeIcon', 'fx.summonAct', 'sfx:elem', 'fx.elemSwitch', 'sfx:shot']);
 // ホストの本人にだけ出る音（ほかの人の画面では出さない）
 const PERSONAL_SFX = new Set(['lock', 'land', 'spReady', 'respawn']);
 
@@ -335,7 +335,7 @@ export class HostMatch extends Match {
       p.vel.multiplyScalar(Math.exp(-3 * dt));
       p.pos.addScaledVector(p.vel, dt);
     }
-    // お守りの溜め → 発動（効き目はホストで計算）
+    // ディスクの溜め → 発動（効き目はホストで計算）
     if (p.charge) {
       p.charge.t -= dt;
       if (p.charge.t <= 0) {
@@ -430,7 +430,10 @@ export class HostMatch extends Match {
       w.u16(o.nid || 0);
       const ki = PROJ_KINDS.indexOf(o.kind);
       w.u8(ki < 0 ? PROJ_KINDS.length - 1 : ki);
-      w.u8(o.owner && o.owner.team != null ? o.owner.team : o.team || 0);
+      // 1バイトに「チーム（下1ビット）」と「撃った人の番号＋1（上のビット。0＝人ではない）」を入れる
+      const team = (o.owner && o.owner.team != null ? o.owner.team : o.team || 0) & 1;
+      const own = o.owner && o.owner.netId != null && !o.owner.isGuardian ? o.owner.netId + 1 : 0;
+      w.u8(team | (own << 1));
       w.vec(o.pos);
       w.vel(o.vel, 20);
     }
@@ -608,10 +611,11 @@ class ClientSkills extends Skills {
   }
   endBig() {}
   endIkemen() {}
-  // 動きにかかわるお守りだけ、自分の端末ですぐに動かす（効き目はホストが計算）
+  // 動きにかかわるディスクだけ、自分の端末ですぐに動かす（効き目はホストが計算）
   fireOmamori(p, id) {
     const M = this.match;
     if (p !== M.player || !p.alive) return;
+    M.fx.summonAct && M.fx.summonAct(p, id);
     if (id === 'warp') {
       _v.copy(p.forward);
       const d = M.world.raycast(p.pos, _v, 17);
@@ -833,7 +837,10 @@ export class ClientMatch extends Match {
       this.mode.netRead(r);
       const np = r.u8();
       snap.pr = [];
-      for (let i = 0; i < np; i++) snap.pr.push({ id: r.u16(), kind: PROJ_KINDS[r.u8()] || 'other', team: r.u8(), pos: r.vec(new THREE.Vector3()), vel: r.vel(new THREE.Vector3(), 20) });
+      for (let i = 0; i < np; i++) {
+        const id = r.u16(), kind = PROJ_KINDS[r.u8()] || 'other', tb = r.u8();
+        snap.pr.push({ id, kind, team: tb & 1, owner: (tb >> 1) - 1, pos: r.vec(new THREE.Vector3()), vel: r.vel(new THREE.Vector3(), 20) });
+      }
       const na = r.u8();
       snap.ar = [];
       for (let i = 0; i < na; i++) snap.ar.push({ id: r.u16(), kind: r.u8() === 0 ? 'mine' : 'field', team: r.u8(), pos: r.vec(new THREE.Vector3()), r: r.u8() / 10 });
@@ -910,7 +917,10 @@ export class ClientMatch extends Match {
       let q = this.projs.get(o.id);
       if (!q) {
         const mesh = this.fx.projectileMesh({ kind: o.kind, owner: { team: o.team }, team: o.team, pos: o.pos });
-        q = { mesh, pos: o.pos.clone(), vel: o.vel.clone(), ht: snap.ht, spin: o.kind === 'tangocho' ? 18 : 0 };
+        // t0：はじめて見えた時刻。ほかの人は少し前の姿で表示しているので、その人の弾は、その時刻になるまで見せない
+        // 自分の弾（mine）は、自分と同じ「いま」の時刻で表示する（すぐ見える）
+        q = { mesh, pos: o.pos.clone(), vel: o.vel.clone(), ht: snap.ht, t0: snap.ht, mine: o.owner === this.player.netId, spin: o.kind === 'tangocho' ? 18 : 0 };
+        if (mesh) mesh.visible = q.mine;
         this.projs.set(o.id, q);
       }
       q.netPos = o.pos;
@@ -933,7 +943,8 @@ export class ClientMatch extends Match {
     }
     for (const [id, a] of this.areasR) {
       if (seen.has(id)) continue;
-      if (a.mesh && a.mesh.parent) a.mesh.parent.remove(a.mesh);
+      // その場で作った形（結界の円など）は GPU からも消す
+      this.fx.disposeArea(a.mesh);
       this.areasR.delete(id);
     }
   }
@@ -1033,12 +1044,15 @@ export class ClientMatch extends Match {
     m.visible = k > 0.02;
   }
   updateProjs(dt) {
-    const rt = nowS() + (this.off || 0) - INTERP;
+    const now = nowS() + (this.off || 0);
     for (const q of this.projs.values()) {
       if (!q.netPos) continue;
-      const age = clamp(rt - q.ht, -0.3, 0.3);
+      const at = q.mine ? now : now - INTERP;
+      const age = clamp(at - q.ht, -0.3, 0.3);
       q.pos.copy(q.netPos).addScaledVector(q.vel, age);
       if (q.mesh) {
+        // 出た時刻より前は見せない（口よりうしろに逆もどりして見えないように）
+        q.mesh.visible = q.mine || at >= q.t0;
         q.mesh.position.copy(q.pos);
         if (q.spin) q.mesh.rotation.y += q.spin * dt;
         else if (q.vel.lengthSq() > 0.01) q.mesh.lookAt(_v.copy(q.pos).add(q.vel));
@@ -1173,7 +1187,9 @@ export class ClientMatch extends Match {
   dispose() {
     this.showWait(null);
     for (const q of this.projs.values()) if (q.mesh && q.mesh.parent) q.mesh.parent.remove(q.mesh);
-    for (const a of this.areasR.values()) if (a.mesh && a.mesh.parent) a.mesh.parent.remove(a.mesh);
+    for (const a of this.areasR.values()) this.fx.disposeArea(a.mesh);
+    this.areasR.clear();
+    this.projs.clear();
     this.room.binHandler = null;
     super.dispose();
   }

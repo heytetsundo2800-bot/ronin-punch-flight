@@ -1,5 +1,7 @@
-// 音（すべてその場で合成する。外部ファイルなし）
+// 音：効果音はその場で合成。BGMはコードで作った曲のファイル（tools/music/bgm.py）
 import { store } from './util.js';
+
+const BGM_LEVEL = 0.72; // 曲の大きさ（設定の「BGM」にかける）
 
 class Sound {
   constructor() {
@@ -9,8 +11,8 @@ class Sound {
     this.bgmGain = null;
     const s = store.get('rpf_sound', { sfx: 0.8, bgm: 0.55 });
     this.vol = s;
-    this.bgm = null;
-    this.bgmTimer = null;
+    this.cur = null; // いま鳴っている曲
+    this.wantKind = null;
     this.unlocked = false;
     this.noiseBuf = null;
     this.last = {};
@@ -34,7 +36,7 @@ class Sound {
         this.sfxGain.gain.value = this.vol.sfx;
         this.sfxGain.connect(this.master);
         this.bgmGain = this.ctx.createGain();
-        this.bgmGain.gain.value = this.vol.bgm * 0.5;
+        this.bgmGain.gain.value = this.vol.bgm * BGM_LEVEL;
         this.bgmGain.connect(this.master);
         const len = this.ctx.sampleRate * 1;
         this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
@@ -42,6 +44,11 @@ class Sound {
         for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
       }
       if (this.ctx.state !== 'running') this.ctx.resume();
+      if (this.wantKind && !this.cur) {
+        const k = this.wantKind;
+        this.wantKind = null;
+        this.playBgm(k);
+      }
       // iPhone：無音を1回鳴らして音を出せる状態にする
       if (!this.unlocked) {
         const b = this.ctx.createBuffer(1, 1, 22050);
@@ -80,7 +87,14 @@ class Sound {
     store.set('rpf_sound', this.vol);
     if (!this.ctx) return;
     if (kind === 'sfx') this.sfxGain.gain.value = v;
-    else this.bgmGain.gain.value = v * 0.5;
+    else {
+      this.bgmGain.gain.value = v * BGM_LEVEL;
+      // 0にしたら曲を止めて、展開した曲も手放す。上げたら、いまの画面の曲をはじめる
+      if (v <= 0.001) {
+        this.fadeBgm(0.2);
+        this.dec = null;
+      } else if (!this.cur && this.wantKind) this.playBgm(this.wantKind);
+    }
   }
 
   // ===== 部品 =====
@@ -295,75 +309,156 @@ class Sound {
       case 'lose':
         [659, 587, 523, 392].forEach((f, i) => this.tone(f, 0.28, 'triangle', 0.12 * v, 0, i * 0.18));
         break;
+      case 'summon':
+        // ディスクのモンスターが出る（光の門がひらく音）
+        this.tone(520, 0.28, 'sine', 0.12 * v, 3.2);
+        this.tone(1568, 0.16, 'triangle', 0.07 * v, 0, 0.06);
+        this.tone(2093, 0.22, 'triangle', 0.05 * v, 0, 0.11);
+        this.noise(0.3, 0.12 * v, 1200, 7000, 2.5);
+        break;
+      case 'summonSR':
+        this.tone(180, 0.45, 'sawtooth', 0.06 * v, 3.5);
+        this.tone(520, 0.3, 'sine', 0.12 * v, 3.2);
+        [1318, 1568, 2093, 2637].forEach((f, i) => this.tone(f, 0.2, 'triangle', 0.055 * v, 0, 0.06 + i * 0.05));
+        this.noise(0.45, 0.16 * v, 600, 8000, 1.8);
+        break;
+      case 'shatter':
+        // モンスターが割れる
+        this.noise(0.22, 0.3 * v, 7000, 2500, 3, 0, 'bandpass');
+        [3520, 4186, 4699, 5274].forEach((f, i) => this.tone(f, 0.09, 'triangle', 0.05 * v, 0.9, i * 0.025));
+        this.tone(220, 0.18, 'square', 0.07 * v, 0.5);
+        break;
       case 'capsule':
         [392, 523, 659, 784, 1046, 1318, 1568].forEach((f, i) => this.tone(f, 0.12, 'square', 0.08 * v, 0, i * 0.05));
         break;
     }
   }
 
-  // ===== BGM（16分音符のループ）=====
+  // ===== BGM（曲のファイルを、つなぎ目なしでループ）=====
+  // 曲は tools/music/bgm.py でコードから作ったもの（ロビー＝118BPM・32小節、バトル＝150BPM・32小節）
+  // ファイルは [おわりの0.5秒][ループ][はじめの0.5秒] になっていて、まん中をくり返す
+  // メモリ：圧縮したままのファイル（1曲 1MB ほど）は持っておき、展開（1曲 20MB ほど）は鳴らす曲だけにする
+  rawBgm(name, ext) {
+    if (!this.raw) this.raw = {};
+    const key = name + '.' + ext;
+    if (!this.raw[key])
+      this.raw[key] = fetch('bgm_' + key + '?m=' + MVER)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('bgm ' + r.status))))
+        .catch((e) => {
+          delete this.raw[key];
+          throw e;
+        });
+    return this.raw[key];
+  }
+  loadBgm(name) {
+    if (!this.ctx || !BGM[name]) return Promise.resolve(null);
+    if (this.dec && this.dec.name === name) return this.dec.p;
+    // 読めなかったばかりの曲は、少し待ってからためす（5秒→10秒→…最大2分）
+    if (!this.bgmFail) this.bgmFail = {};
+    const f = this.bgmFail[name];
+    if (f && Date.now() < f.until) return Promise.resolve(null);
+    // AAC（m4a）が使えるブラウザは m4a、だめなら MP3（展開できなかったときも、もう一方をためす）
+    const first = canAAC() ? 'm4a' : 'mp3';
+    const second = first === 'm4a' ? 'mp3' : 'm4a';
+    const dec = (ab) => new Promise((res, rej) => this.ctx.decodeAudioData(ab.slice(0), res, rej)); // 元のデータは取っておく
+    const p = this.rawBgm(name, first)
+      .then(dec)
+      .catch(() => {
+        if (this.raw) delete this.raw[name + '.' + first];
+        return this.rawBgm(name, second).then(dec);
+      })
+      .then(
+        (buf) => {
+          delete this.bgmFail[name];
+          return buf;
+        },
+        () => {
+          const n = (this.bgmFail[name] ? this.bgmFail[name].n : 0) + 1;
+          this.bgmFail[name] = { n, until: Date.now() + Math.min(120000, 5000 * 2 ** (n - 1)) };
+          if (this.dec && this.dec.p === p) this.dec = null;
+          return null;
+        }
+      );
+    // 展開した曲は1つだけ持つ（前の曲は、鳴りおわったら消える）
+    this.dec = { name, p };
+    return p;
+  }
   playBgm(kind) {
-    if (this.bgmKind === kind) return;
-    this.stopBgm();
-    this.bgmKind = kind;
-    if (!this.ctx) return;
-    const songs = {
-      menu: { bpm: 112, key: 0, prog: [0, 5, 3, 4], lead: true, drive: 0 },
-      battle: { bpm: 150, key: 2, prog: [0, 4, 5, 3], lead: true, drive: 1 },
-      final: { bpm: 166, key: 4, prog: [5, 3, 0, 4], lead: true, drive: 2 },
-      result: { bpm: 120, key: 0, prog: [0, 3, 4, 0], lead: true, drive: 0 },
-    };
-    const S = songs[kind];
-    if (!S) return;
+    const name = BGM_OF[kind];
+    this.wantKind = kind;
+    if (!name) return this.stopBgm();
+    if (!this.ctx) return; // 音が出せるようになったら（unlock）はじめる
+    if (this.cur && this.cur.name === name) return;
+    // BGMの音量が0：読みこまない（音量を上げたら、そのときはじめる）
+    if (this.vol.bgm <= 0.001) return this.fadeBgm(0.3);
+    const token = (this.bgmToken = (this.bgmToken || 0) + 1);
+    this.loadBgm(name).then((buf) => {
+      if (!buf || token !== this.bgmToken || BGM_OF[this.wantKind] !== name || this.vol.bgm <= 0.001) return;
+      if (this.cur && this.cur.name === name) return;
+      this.startBgmBuf(name, buf);
+      // もう1曲は、圧縮のまま先に取っておく（展開は使うときに）
+      const other = name === 'lobby' ? 'battle' : 'lobby';
+      this.rawBgm(other, canAAC() ? 'm4a' : 'mp3').catch(() => {});
+    });
+  }
+  startBgmBuf(name, buf) {
     const c = this.ctx;
-    const step = 60 / S.bpm / 4;
-    let next = c.currentTime + 0.1;
-    let i = 0;
-    const scale = [0, 2, 4, 5, 7, 9, 11];
-    const base = 48 + S.key; // C3
-    const chordOf = (deg) => [scale[deg % 7], scale[(deg + 2) % 7] + (deg + 2 >= 7 ? 12 : 0), scale[(deg + 4) % 7] + (deg + 4 >= 7 ? 12 : 0)];
-    const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
-    const melodyPat = [0, -1, 2, -1, 1, 2, -1, 4, 2, -1, 1, 0, -1, 2, 4, -1];
-    const tick = () => {
-      while (next < c.currentTime + 0.25) {
-        const bar = Math.floor(i / 16) % 4;
-        const s16 = i % 16;
-        const deg = S.prog[bar];
-        const ch = chordOf(deg);
-        const t = next - c.currentTime;
-        const g = this.bgmGain;
-        // ドラム
-        if (s16 % 4 === 0) this.tone(60, 0.18, 'sine', 0.5, 0.35, t, g);
-        if (S.drive && (s16 === 4 || s16 === 12)) this.noise(0.14, 0.32, 2400, 900, 0.6, t, 'bandpass', g);
-        if (!S.drive && s16 === 8) this.noise(0.12, 0.2, 2000, 800, 0.8, t, 'bandpass', g);
-        if (s16 % 2 === 0 || S.drive > 1) this.noise(0.035, S.drive ? 0.1 : 0.06, 9000, 7000, 1, t, 'highpass', g);
-        // ベース
-        if (s16 % 2 === 0) {
-          const n = base - 12 + ch[0] + (s16 % 8 === 6 ? 12 : 0);
-          this.tone(midi(n), step * 1.8, S.drive ? 'sawtooth' : 'triangle', S.drive ? 0.09 : 0.12, 0, t, g);
-        }
-        // コード（裏拍）
-        if (s16 % 4 === 2) for (const cn of ch) this.tone(midi(base + 12 + cn), step * 1.6, 'square', 0.025, 0, t, g);
-        // メロディ
-        if (S.lead) {
-          const mi = melodyPat[(s16 + bar * 3) % 16];
-          if (mi >= 0 && (s16 % 2 === 0 || S.drive)) {
-            const n = base + 24 + chordOf(deg)[mi % 3] + (mi >= 3 ? 12 : 0);
-            this.tone(midi(n), step * (S.drive ? 0.9 : 1.6), 'square', S.drive ? 0.045 : 0.035, 0, t, g);
-          }
-        }
-        next += step;
-        i++;
-      }
-    };
-    tick();
-    this.bgmTimer = setInterval(tick, 60);
+    const t = c.currentTime + 0.03;
+    this.fadeBgm(0.6);
+    const L = BGM[name];
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.loopStart = L.start;
+    src.loopEnd = Math.min(L.end, buf.duration - 0.01);
+    const g = c.createGain();
+    // 1小節目の頭がちゃんと聞こえるように、頭の少し前から鳴らして、頭までに音量を上げきる（ブツッと鳴らないように）
+    const pre = Math.min(0.12, L.start);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(1, t + pre * 0.85);
+    src.connect(g);
+    g.connect(this.bgmGain);
+    src.start(t, L.start - pre);
+    this.cur = { name, src, g };
+  }
+  fadeBgm(sec) {
+    const cur = this.cur;
+    if (!cur || !this.ctx) return;
+    this.cur = null;
+    const t = this.ctx.currentTime;
+    try {
+      cur.g.gain.cancelScheduledValues(t);
+      cur.g.gain.setValueAtTime(Math.max(0.0001, cur.g.gain.value), t);
+      cur.g.gain.exponentialRampToValueAtTime(0.0001, t + sec);
+      cur.src.stop(t + sec + 0.05);
+    } catch (e) {}
   }
   stopBgm() {
-    if (this.bgmTimer) clearInterval(this.bgmTimer);
-    this.bgmTimer = null;
-    this.bgmKind = null;
+    this.wantKind = null;
+    this.bgmToken = (this.bgmToken || 0) + 1;
+    this.fadeBgm(0.4);
   }
 }
+
+// 曲のファイルとループの位置（秒）。小節数×拍子から計算（bgm.py と同じ）
+const MVER = typeof __MVER__ !== 'undefined' ? __MVER__ : '0';
+const loopOf = (bpm, bars) => ({ start: 0.5, end: 0.5 + Math.floor(((bars * 4 * 60) / bpm) * 44100) / 44100 });
+const BGM = {
+  lobby: loopOf(118, 32),
+  battle: loopOf(150, 32),
+};
+let _aac = null;
+function canAAC() {
+  if (_aac == null) {
+    try {
+      _aac = !!document.createElement('audio').canPlayType('audio/mp4; codecs="mp4a.40.2"');
+    } catch (e) {
+      _aac = false;
+    }
+  }
+  return _aac;
+}
+// 画面ごとの曲（試合の残り30秒も、同じ曲のまま）
+const BGM_OF = { menu: 'lobby', result: 'lobby', battle: 'battle', final: 'battle' };
 
 export const sound = new Sound();

@@ -1,6 +1,7 @@
 // キャラの顔アイコン・全身の絵を3Dモデルから作る
 import * as THREE from 'three';
 import { buildPuncher, poseModel } from './model.js';
+import { buildMonster, poseMonster } from './monsters.js';
 import { disposeDeep } from './gfx.js';
 import { PUNCHERS } from './characters.js';
 import { TEAM } from './config.js';
@@ -48,6 +49,15 @@ export class Portraits {
       cam.lookAt(0, 0.05, 0);
     }
     cam.updateProjectionMatrix();
+    const url = this.snap(model, w, h, w0, h0);
+    disposeDeep(model);
+    this.cache.set(key, url);
+    return url;
+  }
+  // 3Dの物を写真にする（2倍で描いて縮める）
+  snap(model, w, h, w0, h0) {
+    const R = this.renderer;
+    const cam = this.cam;
     const rt = new THREE.WebGLRenderTarget(w, h, { samples: 0 });
     rt.texture.colorSpace = THREE.SRGBColorSpace;
     const prevT = R.getRenderTarget();
@@ -63,7 +73,6 @@ export class Portraits {
     R.setClearColor(prevC, prevA);
     rt.dispose();
     this.scene.remove(model);
-    disposeDeep(model);
     // 上下を反転してキャンバスへ
     const c = document.createElement('canvas');
     c.width = w;
@@ -95,6 +104,37 @@ export class Portraits {
     try {
       url = c2.toDataURL('image/png');
     } catch (e) {}
+    return url;
+  }
+  // ディスクのモンスターの絵（ななめ前から全身）
+  monster(monId, size = 160) {
+    const key = 'mon|' + monId + '|' + size;
+    if (this.cache.has(key)) return this.cache.get(key);
+    const m = buildMonster(monId);
+    m.rotation.y = 0.75;
+    poseMonster(m, 'idle', 0, 0.55);
+    this.scene.add(m);
+    m.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    // 光の板（スプライト）は大きさに入れない
+    m.traverse((o) => {
+      if (o.isMesh && o.name !== 'outline') {
+        o.geometry.computeBoundingBox();
+        const b = o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
+        box.union(b);
+      }
+    });
+    const c = box.getCenter(new THREE.Vector3());
+    const sz = box.getSize(new THREE.Vector3());
+    const r = Math.max(sz.x, sz.y * 1.1, sz.z) * 0.5;
+    const cam = this.cam;
+    cam.aspect = 1;
+    cam.fov = 28;
+    const dist = (r / Math.tan((cam.fov * Math.PI) / 360)) * 1.08;
+    cam.position.set(c.x + dist * 0.12, c.y + dist * 0.26, c.z + dist);
+    cam.lookAt(c.x, c.y - r * 0.04, c.z);
+    cam.updateProjectionMatrix();
+    const url = this.snap(m, size * 2, size * 2, size, size);
     this.cache.set(key, url);
     return url;
   }

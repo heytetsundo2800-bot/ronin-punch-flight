@@ -291,7 +291,7 @@ export class Puncher {
     this.lock = c[(i + 1) % c.length];
   }
 
-  // スロット 0,1 / 3,4 はお守り、2 はパンチャースキル
+  // スロット 0,1 / 3,4 はディスク、2 はパンチャースキル
   useSlot(slot) {
     if (slot === 2) return this.useKS();
     const oi = slot < 2 ? slot : slot - 1;

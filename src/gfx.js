@@ -44,7 +44,8 @@ export function outlineMat(color = 0x14161c, width = 0.022) {
       .replace('#include <common>', '#include <common>\nuniform float uOutline;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed += normalize(normal) * uOutline;');
   };
-  m.customProgramCacheKey = () => 'outline' + width;
+  // 太さは uniform なので、シェーダーは全部の太さで1つを使い回す（材質ごとに uniform は別）
+  m.customProgramCacheKey = () => 'outline';
   m.userData.shared = true;
   outlineCache.set(key, m);
   return m;

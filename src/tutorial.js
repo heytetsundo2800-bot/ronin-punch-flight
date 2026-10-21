@@ -1,5 +1,6 @@
 // 操作の練習（キックフライトのチュートリアルと同じ順番）
 import * as THREE from 'three';
+import { ICON } from './icons.js';
 import { Match } from './match.js';
 import { PUNCHER_IDS } from './characters.js';
 import { el, $ } from './util.js';
@@ -16,7 +17,7 @@ const STEPS = [
   { id: 'collect', label: 'スクランブル', msg: '移動を使いこなして<em>サクラ</em>を集めよう！<br><small>近くを通るだけで取れる。持つほど遅くなる</small>', need: 6, hint: null },
   { id: 'deposit', label: 'スクランブル', msg: '青いダルマに近づいて、右下の<em>「預ける」を長押し</em>！<br><small>預けたサクラは倒されてもなくならない</small>', need: 4, hint: 'deposit' },
   { id: 'attack', label: '攻撃', msg: '敵があらわれた！右の<em>顔アイコンをタップ</em>でロックオン。<br>近づくと<em>自動でパンチ</em>するよ', need: 4, hint: 'lock' },
-  { id: 'om', label: '攻撃', msg: '下の<em>お守りを上にフリック</em>して、スキルを使おう！', need: 1, hint: 'om' },
+  { id: 'om', label: '攻撃', msg: '下の<em>ディスクを上にフリック</em>して、モンスターの技を出そう！', need: 1, hint: 'om' },
   { id: 'ks', label: '攻撃', msg: 'まん中の<em>顔のアイコンを上にフリック</em>！パンチャースキル', need: 1, hint: 'ks' },
   { id: 'sp', label: '攻撃', msg: '最後に、戦況を一気に変える<em>スペシャル</em>！<br>光っている<em>SPボタン</em>をタップ', need: 1, hint: 'sp' },
 ];
@@ -31,7 +32,7 @@ export class Tutorial extends Match {
     this.prev = {};
     this.box = el('div', 'tut', '<div class="box"><span class="lbl"></span><span class="msg"></span><span class="cnt"></span></div>');
     app.hudRoot.appendChild(this.box);
-    this.hand = el('div', 'handhint hidden', '👆');
+    this.hand = el('div', 'handhint hidden', ICON.touch);
     app.hudRoot.appendChild(this.hand);
     this.enemy = null;
     // 最初はダルマに少しサクラを預けておく（攻撃の目印）
@@ -173,17 +174,20 @@ export class Tutorial extends Match {
       return;
     }
     h.classList.remove('hidden');
-    h.style.left = r.left + r.width / 2 - 14 + 'px';
-    h.style.top = r.top + r.height * 0.55 + 'px';
-    const anim = { swipe: 'translateX', side: 'translateX', down: 'translateY', updown: 'translateY' }[S.hint];
-    h.textContent = S.hint === 'hold' ? '👆' : S.hint === 'swipe' || S.hint === 'side' ? '👉' : S.hint === 'down' ? '👇' : S.hint === 'updown' ? '↕️' : '👆';
+    // 手の絵は CSS で中心に合わせてある（margin）。動き方は data-k ごとに CSS で変える
+    const x = Math.round(r.left + r.width / 2) + 'px';
+    const y = Math.round(r.top + r.height * 0.55) + 'px';
+    if (h.style.left !== x) h.style.left = x;
+    if (h.style.top !== y) h.style.top = y;
+    const k = S.hint || 'center';
+    if (h.dataset.k !== k) h.dataset.k = k;
   }
   complete() {
     this.done = true;
     this.hand.classList.add('hidden');
     this.box.querySelector('.lbl').textContent = 'クリア';
     this.box.querySelector('.msg').innerHTML = '基本操作はこれで全部！<br>本番は<em>4対4</em>で、3分間でより多くのサクラを集めたチームの勝ち！';
-    this.box.querySelector('.cnt').textContent = '🎉';
+    this.box.querySelector('.cnt').innerHTML = ICON.check;
     this.app.save.tutorial = true;
     saveSave(this.app.save);
     sound.play('win');

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OMAMORI, OMAMORI_IDS } from './characters.js';
 import { ELEM } from './config.js';
 
-export const PROTO = 2; // 形を変えたら上げる（ちがう版どうしでは遊べない）
+export const PROTO = 3; // 形を変えたら上げる（ちがう版どうしでは遊べない）。3：ディスクのモンスター（summonAct）・弾を撃った人の番号
 
 // 状態の番号
 export const STATES = ['hover', 'fly', 'dash', 'cruise', 'step', 'roll', 'brake', 'uturn', 'hurt', 'stun', 'ko', 'special', 'skill'];
@@ -134,7 +134,7 @@ export class Reader {
   }
 }
 
-// ===== できごとの引数を JSON にする（人・ダルマ・ベクトル・お守りを番号に）=====
+// ===== できごとの引数を JSON にする（人・ダルマ・ベクトル・ディスクを番号に）=====
 export function ser(v, M) {
   if (v == null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return typeof v === 'number' ? Math.round(v * 1000) / 1000 : v;
   if (v.isVector3) return { v: [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100] };

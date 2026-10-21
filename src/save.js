@@ -90,7 +90,7 @@ export function applyResult(s, r) {
   cs.plays++;
   if (myWin > 0) cs.wins++;
   s.charStats[r.char] = cs;
-  // お守り袋：勝ち・MVPでもらえる
+  // ディスクパック：勝ち・MVPでもらえる
   let bags = myWin > 0 ? 1 : 0;
   if (mvp) bags++;
   if (s.plays === 1) bags = Math.max(bags, 1);

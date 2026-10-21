@@ -1,8 +1,12 @@
 // 浪人パンチフライト：アプリ全体（画面の切りかえ・描画のループ）
 import * as THREE from 'three';
 import './styles.css';
+import './theme.css';
+import { ICON, stageIcon } from './icons.js';
 import { VERSION, BUILD, MODES, DIFFICULTY, ELEM, TEAM, rankOf, RANKS, STAGES, STAGE_CHOICES, stageLabel, resolveStage } from './config.js';
-import { PUNCHERS, PUNCHER_IDS, OMAMORI, OMAMORI_IDS, KIND_COLOR, RARE_COLOR } from './characters.js';
+import { PUNCHERS, PUNCHER_IDS, OMAMORI, OMAMORI_IDS, KIND_COLOR, KIND_NAME, RARE_COLOR } from './characters.js';
+import { buildMonster, poseMonster, MONSTERS } from './monsters.js';
+import { projectileLook } from './fx.js';
 import { buildPuncher, poseModel } from './model.js';
 import { Portraits } from './portraits.js';
 import { Input } from './input.js';
@@ -290,10 +294,99 @@ class App {
     L.charId = id;
     L.spin = Math.PI * 2;
   }
+  // ディスクの画面：モンスターが技を見せる（溜め→技→休む をくり返す）
+  setLobbyMon(monId, discId) {
+    const L = this.lobby;
+    if (!L) return;
+    L.monDisc = discId || null;
+    if (L.monId === monId && L.mon) return;
+    if (L.mon) L.scene.remove(L.mon);
+    const m = buildMonster(monId);
+    m.rotation.order = 'YXZ';
+    // 大きさをそろえる（いちばん長いところを約3.2に）
+    m.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    m.traverse((o) => {
+      if (o.isMesh && o.name !== 'outline') {
+        o.geometry.computeBoundingBox();
+        box.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld));
+      }
+    });
+    const sz = box.getSize(new THREE.Vector3());
+    const c = box.getCenter(new THREE.Vector3());
+    const k = 2.3 / Math.max(sz.x, sz.y, sz.z, 0.5);
+    L.monCy = c.y / m.scale.x; // 大きさをかける前の、まん中の高さ
+    L.monBase = m.scale.x * k;
+    m.scale.setScalar(L.monBase);
+    L.scene.add(m);
+    L.mon = m;
+    L.monId = monId;
+    L.monT = 0;
+    if (!L.hex) {
+      L.hex = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 6, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+      L.scene.add(L.hex);
+    }
+    L.hex.material.color.set(ELEM[MONSTERS[monId].elem].hex);
+  }
   updateLobby(dt) {
     const L = this.lobby;
     L.t += dt;
     L.spin = damp(L.spin, 0, 6, dt);
+    const disc = L.view === 'disc' && L.mon;
+    if (L.model) L.model.visible = !disc;
+    if (L.mon) L.mon.visible = !!disc;
+    if (disc) {
+      // 3秒ごとに：溜め（1秒）→ 技（0.8秒）→ 休む
+      L.monT += dt;
+      const T = L.monT % 3.2;
+      const ph = T < 1.1 ? 'charge' : T < 1.9 ? 'act' : 'idle';
+      const kk = ph === 'charge' ? T / 1.1 : ph === 'act' ? (T - 1.1) / 0.8 : 0;
+      const m = L.mon, U = m.userData;
+      poseMonster(m, ph, kk, L.monT);
+      const turn = 0.7 + Math.sin(L.t * 0.35) * 0.28;
+      m.rotation.set(U.tilt || 0, turn, 0);
+      m.position.set(Math.sin(turn) * U.push * 0.25, 0.7 - L.monCy * L.monBase + (U.lift - U.dive) * 0.6 + Math.sin(L.t * 1.6) * 0.06, Math.cos(turn) * U.push * 0.25);
+      m.scale.setScalar(L.monBase * (ph === 'act' ? 1 + Math.sin(kk * Math.PI) * 0.05 : 1));
+      // 攻撃のディスクは、口から弾が飛んでいく
+      if (ph === 'act' && L.lastPh !== 'act' && L.monDisc && /^(akahon|tangocho|pencil)$/.test(L.monDisc)) {
+        if (L.shot) L.scene.remove(L.shot.m);
+        const sm = projectileLook(L.monDisc);
+        sm.scale.setScalar(0.7);
+        const mo = m.userData.def.mouth;
+        const k = L.monBase;
+        const sx = Math.sin(turn), cx = Math.cos(turn);
+        sm.position.set(m.position.x + (mo[0] * cx + mo[2] * sx) * k, m.position.y + mo[1] * k, m.position.z + (-mo[0] * sx + mo[2] * cx) * k);
+        L.scene.add(sm);
+        L.shot = { m: sm, t: 0, v: new THREE.Vector3(sx, 0, cx).multiplyScalar(7) };
+      }
+      L.lastPh = ph;
+      if (L.shot) {
+        const q = L.shot;
+        q.t += dt;
+        q.m.position.addScaledVector(q.v, dt);
+        if (L.monDisc === 'tangocho') q.m.rotation.y += dt * 16;
+        else q.m.lookAt(q.m.position.x + q.v.x, q.m.position.y + q.v.y, q.m.position.z + q.v.z);
+        q.m.scale.setScalar(0.7 * Math.max(0.01, 1 - Math.max(0, q.t - 0.45) / 0.25));
+        if (q.t > 0.7) {
+          L.scene.remove(q.m);
+          L.shot = null;
+        }
+      }
+      // 技の瞬間に六角の輪
+      const hx = L.hex;
+      if (ph === 'act') {
+        hx.position.set(0, 0.7, 0.4);
+        hx.lookAt(L.cam.position);
+        hx.scale.setScalar(0.6 + kk * 3.4);
+        hx.material.opacity = 0.9 * (1 - kk);
+      } else hx.material.opacity = 0;
+    } else {
+      if (L.hex) L.hex.material.opacity = 0;
+      if (L.shot) {
+        L.scene.remove(L.shot.m);
+        L.shot = null;
+      }
+    }
     if (L.model) {
       L.model.rotation.y = 0.35 + Math.sin(L.t * 0.4) * 0.15 + L.spin;
       poseModel(L.model, { mode: L.pose, t: L.t, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.3, runPhase: 0 }, dt);
@@ -309,6 +402,11 @@ class App {
       dist = portrait ? 6.2 : 5.5;
       ox = portrait ? 0 : 1.2;
       ly = portrait ? -0.75 : 0.2;
+    } else if (L.view === 'disc') {
+      // ディスク：上の窓にモンスター
+      dist = portrait ? 9.5 + (0.5 - Math.min(0.5, asp)) * 8 : 12;
+      ox = 0;
+      ly = portrait ? -1.6 : -2.1;
     }
     L.cx = damp(L.cx == null ? ox : L.cx, ox, 5, dt);
     L.cd = damp(L.cd == null ? dist : L.cd, dist, 5, dt);
@@ -326,7 +424,7 @@ class App {
   // ===== 画面の部品 =====
   setScreen(html, cls) {
     this.screenEl.innerHTML = '';
-    if (this.lobby) this.lobby.view = (cls || '').includes('charsel') ? 'chars' : 'home';
+    if (this.lobby) this.lobby.view = (cls || '').includes('charsel') ? 'chars' : (cls || '').includes('discsel') ? 'disc' : 'home';
     const s = el('div', 'screen ' + (cls || ''), html);
     this.screenEl.appendChild(s);
     this.backHandler = null;
@@ -387,8 +485,8 @@ class App {
     sound.playBgm('menu');
     this.lobby.pose = 'hover';
     const s = this.setScreen(
-      `<div class="logo"><span class="l1">一浪の空で、殴りあえ。</span><span class="l2">浪人パンチ<br>フライト</span><span class="l3">360°空中バトル・4対4</span></div>
-       <div class="tapstart outline">タップしてはじめる</div>
+      `<div class="logo"><span class="l1">一浪の空で、殴りあえ。</span><span class="l2">浪人パンチ<br>フライト</span><span class="en">RONIN PUNCH FLIGHT</span><span class="l3">360° AERIAL BATTLE / 4 VS 4</span></div>
+       <div class="tapwrap"><div class="tapstart">TAP TO START</div><div class="tapjp">タップしてはじめる</div></div>
        <div class="ver">v${VERSION}（${BUILD}）</div>`,
       'title'
     );
@@ -411,7 +509,7 @@ class App {
 
   showName(first) {
     const s = this.setScreen(
-      `<div class="hdr">${first ? '' : '<button class="back">←</button>'}<h2>ニックネーム</h2></div>
+      `<div class="hdr">${first ? '' : `<button class="back" aria-label="もどる">${ICON.back}</button>`}<h2>ニックネーム</h2></div>
        <div class="card"><p>ゲームの中とランキングに出る名前です。<b>本名は入れないでね。</b></p>
        <div class="field"><input maxlength="10" placeholder="10文字まで" value="${escapeHtml(this.save.name || '')}"></div>
        <p class="note">あとから「せってい」で変えられます。</p></div>
@@ -449,6 +547,18 @@ class App {
   // ===== ホーム（ロビー）=====
   showHome() {
     sound.playBgm('menu');
+    // ディスクの絵を、ひまなときに少しずつ先に作っておく（ディスク画面をすぐ開けるように）
+    if (!this._monWarm) {
+      this._monWarm = true;
+      const ids = OMAMORI_IDS.slice();
+      const step = () => {
+        const id = ids.shift();
+        if (!id) return;
+        if (!this.match) this.portraits.monster(OMAMORI[id].mon, 128);
+        setTimeout(step, 140);
+      };
+      setTimeout(step, 1200);
+    }
     if (!store.ok() && !this._noStoreWarned) {
       this._noStoreWarned = true;
       setTimeout(() => this.toast('この端末は記録を保存できない設定です（プライベートブラウズなど）。閉じると記録が消えます', 4500), 800);
@@ -464,27 +574,27 @@ class App {
       `<div class="topbar">
          <div class="plate"><div class="rankbadge">${rk.key}</div><div style="min-width:0"><div class="nm">${escapeHtml(S.name || 'プレイヤー')}</div><div class="rp">ランク ${S.rp}pt${rk.next ? ' / 次 ' + rk.next : ''}</div><div class="rpbar"><i style="width:${prog}%"></i></div></div></div>
          <div style="flex:1"></div>
-         ${isIOS && !isStandalone() && !isInApp ? '<button class="iconbtn a2hs" aria-label="アプリにする">📲</button>' : ''}
-         <button class="iconbtn help" aria-label="遊び方">？</button>
-         <button class="iconbtn share" aria-label="友だちに送る">↗</button>
+         ${isIOS && !isStandalone() && !isInApp ? `<button class="iconbtn a2hs" aria-label="アプリにする">${ICON.install}</button>` : ''}
+         <button class="iconbtn help" aria-label="遊び方">${ICON.help}</button>
+         <button class="iconbtn share" aria-label="友だちに送る">${ICON.share}</button>
        </div>
        <div class="modecard">
-         <div class="hd"><b>レギュラー</b><span>CPUと4対4</span></div>
-         <div class="rule"><button class="prev">◀</button><div class="nm"></div><button class="next">▶</button></div>
+         <div class="hd"><b>REGULAR</b><span>CPU 4 VS 4</span></div>
+         <div class="rule"><button class="prev" aria-label="前のルール">${ICON.back}</button><div class="nm"></div><button class="next" aria-label="次のルール">${ICON.next}</button></div>
          <div class="sub"></div>
          <div class="seg diff">${Object.keys(DIFFICULTY).map((k) => `<button data-k="${k}">${DIFFICULTY[k].name}</button>`).join('')}</div>
-         <button class="stagebtn" aria-label="ステージをかえる"><span>ステージ</span><b></b><i>▶</i></button>
+         <button class="stagebtn" aria-label="ステージをかえる"><span>STAGE</span><b></b><i>${ICON.next}</i></button>
        </div>
-       <button class="battlebtn">バトル</button>
-       <button class="onlinebtn"><b>👥 フレンドとオンライン対戦</b><small>部屋をつくって LINE で招待（ベータ）</small></button>
-       <div class="homechar"><div class="nm">${escapeHtml(def.name)}</div><div class="tp">${def.typeName}・${ELEM[def.elem].name}</div></div>
+       <button class="battlebtn"><span class="en">BATTLE</span><span class="jp">バトル</span></button>
+       <button class="onlinebtn">${ICON.online}<b>フレンドとオンライン対戦</b><small>部屋をつくって LINE で招待（ベータ）</small></button>
+       <div class="homechar"><span class="en">${escapeHtml(def.en)}</span><div class="nm">${escapeHtml(def.name)}</div><div class="tp">${def.typeName}・${ELEM[def.elem].name}</div></div>
        <div style="flex:1"></div>
        <div class="tabs">
-         <button data-t="char"><span class="i">👊</span>パンチャー</button>
-         <button data-t="om"><span class="i">🧧</span>お守り</button>
-         <button data-t="home" class="on"><span class="i">🏠</span>ホーム</button>
-         <button data-t="rank"><span class="i">🏆</span>ランキング</button>
-         <button data-t="set"><span class="i">⚙️</span>せってい</button>
+         <button data-t="char"><span class="i">${ICON.fighter}</span>パンチャー</button>
+         <button data-t="om"><span class="i">${ICON.disc}</span>ディスク</button>
+         <button data-t="home" class="on"><span class="i">${ICON.home}</span>ホーム</button>
+         <button data-t="rank"><span class="i">${ICON.rank}</span>ランキング</button>
+         <button data-t="set"><span class="i">${ICON.gear}</span>せってい</button>
        </div>`,
       'home'
     );
@@ -517,7 +627,7 @@ class App {
       sound.play('ui');
     }));
     const stBtn = $('.stagebtn', s);
-    const showStage = () => ($('b', stBtn).textContent = stageLabel(S.stage));
+    const showStage = () => ($('b', stBtn).innerHTML = stageIcon(S.stage) + escapeHtml(stageLabel(S.stage)));
     showStage();
     stBtn.onclick = () => {
       const i = STAGE_CHOICES.indexOf(STAGE_CHOICES.includes(S.stage) ? S.stage : 'random');
@@ -558,7 +668,7 @@ class App {
       'modal',
       `<div class="box"><h3>ホーム画面に追加すると<br>アプリみたいに遊べる！</h3>
       <div class="ctrl" style="grid-template-columns:34px 1fr;gap:10px">
-        <b>1</b><span>Safari の下（または上）の <span style="font-size:18px">⎋</span> 共有ボタン（四角から矢印が出ているマーク）を押す</span>
+        <b>1</b><span>Safari の下（または上）の <span class="inico">${ICON.iosShare}</span> 共有ボタン（四角から矢印が出ているマーク）を押す</span>
         <b>2</b><span>「ホーム画面に追加」を押す（見つからなければ下にスクロール）</span>
         <b>3</b><span>右上の「追加」を押す → ホーム画面のアイコンから起動！</span>
       </div>
@@ -596,7 +706,7 @@ class App {
   // ===== オンライン対戦 =====
   showOnline() {
     const s = this.setScreen(
-      `<div class="hdr"><button class="back">←</button><h2>オンライン対戦</h2></div>
+      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>オンライン対戦</h2></div>
        <div class="card"><h3>フレンドと4対4（ベータ版）</h3>
          <p>部屋をつくって、コードかLINEで友だちを呼ぼう。あいた席はCPUが入る。</p>
          <button class="btn y wide make">部屋をつくる</button>
@@ -754,7 +864,7 @@ class App {
     this.lobby.pose = 'hover';
     const host = room.role === 'host';
     const s = this.setScreen(
-      `<div class="hdr"><button class="back">←</button><h2>オンライン対戦</h2></div>
+      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>オンライン対戦</h2></div>
        <div class="card roomcode"><div><div class="note">部屋コード</div><div class="code">${room.code}</div></div><div class="col"><button class="btn y small invite">LINEで招待</button><button class="btn k small copy">コピー</button></div></div>
        <div class="card teams"><div class="tcol t0"><h4>青チーム</h4><div class="slots"></div></div><div class="tcol t1"><h4>赤チーム</h4><div class="slots"></div></div></div>
        <div class="card ropts"></div>
@@ -828,7 +938,7 @@ class App {
         });
       const M = MODES[st.mode] || MODES.scramble;
       $('.ropts', s).innerHTML = host
-        ? `<div class="rule"><button class="prev">◀</button><div class="nm">${M.name}</div><button class="next">▶</button></div>
+        ? `<div class="rule"><button class="prev" aria-label="前のルール">${ICON.back}</button><div class="nm">${M.name}</div><button class="next" aria-label="次のルール">${ICON.next}</button></div>
            <div class="toggle"><span>ステージ</span><div class="seg stg" style="margin:0;width:200px;background:rgba(255,255,255,0.1)">${STAGE_CHOICES.map((k) => `<button data-k="${k}" class="${(st.stage || 'random') === k ? 'on' : ''}">${k === 'random' ? 'おまかせ' : STAGES[k].short}</button>`).join('')}</div></div>
            <div class="toggle"><span>CPUの強さ</span><div class="seg dif" style="margin:0;width:180px;background:rgba(255,255,255,0.1)">${Object.keys(DIFFICULTY).map((k) => `<button data-k="${k}" class="${st.diff === k ? 'on' : ''}">${DIFFICULTY[k].name}</button>`).join('')}</div></div>
            <label class="toggle"><span>あいた席をCPUで埋める</span><input type="checkbox" class="fill" ${st.fill ? 'checked' : ''}></label>`
@@ -906,7 +1016,7 @@ class App {
     this.setLobbyChar(cur);
     this.lobby.pose = 'hover';
     const s = this.setScreen(
-      `<div class="hdr"><button class="back">←</button><h2>パンチャー</h2></div>
+      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>パンチャー</h2></div>
        <div class="charlist">${PUNCHER_IDS.map((id) => `<button data-id="${id}"><img alt="" src="${this.portraits.get(id, 0)}"><div>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</div></button>`).join('')}</div>
        <div style="flex:1;min-height:150px"></div>
        <div class="card info" style="max-height:46vh;overflow-y:auto;touch-action:pan-y"></div>
@@ -948,38 +1058,42 @@ class App {
     };
   }
 
-  // ===== お守り（デッキ）=====
+  // ===== ディスク（デッキ）=====
+  // キックフライトのディスクと同じ：モンスターの技をキャラに付ける。上で3Dのモンスターが技を見せる
   showOmamori() {
     const S = this.save;
     const charId = S.char;
-    let sel = null; // 選んだお守り
+    let sel = null; // 一覧で選んだディスク（上の枠をタップすると入れかわる）
     const s = this.setScreen(
-      `<div class="hdr"><button class="back">←</button><h2>お守り（${escapeHtml(PUNCHERS[charId].short || PUNCHERS[charId].name)}）</h2></div>
-       <div class="card"><h3>セット中（左はしの色が最初の属性）</h3><div class="deck4"></div><p class="note">下の一覧から選んで、上の枠をタップすると入れかわります。</p></div>
-       <div class="card omdetail"></div>
-       <div class="card" style="flex:1;overflow-y:auto;touch-action:pan-y"><h3>持っているお守り</h3><div class="omgrid"></div></div>`,
-      'panel scroll'
+      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>ディスク<small>${escapeHtml(PUNCHERS[charId].short || PUNCHERS[charId].name)}</small></h2></div>
+       <div class="discstage"><div class="dsinfo"></div></div>
+       <div class="dsbody">
+         <div class="card deckcard"><h3>セット中<span class="hint">左はしの属性で始まる</span></h3><div class="deck4"></div></div>
+         <div class="card omdetail"></div>
+         <div class="card listcard"><h3>持っているディスク<span class="hint cnt"></span></h3><div class="omgrid"></div></div>
+       </div>`,
+      'panel discsel'
     );
-    const deckEl = $('.deck4', s), grid = $('.omgrid', s), det = $('.omdetail', s);
+    const deckEl = $('.deck4', s), grid = $('.omgrid', s), det = $('.omdetail', s), info = $('.dsinfo', s);
     const card = (id, extra = '') => {
       const o = OMAMORI[id];
       const owned = !!S.om[id];
-      return `<button class="omcard ${extra} ${owned ? '' : 'locked'}" data-id="${id}"><div class="g" style="background:radial-gradient(circle at 50% 40%, ${ELEM[o.elem].color}cc, ${ELEM[o.elem].color})">${o.icon}<span class="r" style="color:${RARE_COLOR[o.rare]}">${o.rare}</span>${owned ? `<span class="lv">Lv${omLevel(S, id)}</span>` : ''}</div><span class="k" style="background:${KIND_COLOR[o.kind]}">${o.kind}</span></button>`;
+      return `<button class="omcard ${extra} ${owned ? '' : 'locked'}" data-id="${id}" style="--e:${ELEM[o.elem].color};--k:${KIND_COLOR[o.kind]};--r:${RARE_COLOR[o.rare]}" aria-label="${escapeHtml(o.name)}"><div class="g"><img alt="" src="${this.portraits.monster(o.mon, 128)}"></div><span class="r">${o.rare}</span>${owned ? `<span class="lv">Lv${omLevel(S, id)}</span>` : `<span class="lk">${ICON.lock}</span>`}<span class="k">${o.kind}</span></button>`;
     };
-    const showDet = (id) => {
-      if (!id) {
-        det.innerHTML = '<p class="note">お守りをタップすると説明が出ます。上フリックで発動、下フリックでその色の属性に変わります。</p>';
-        return;
-      }
+    const show = (id) => {
       const o = OMAMORI[id];
+      if (!o) return;
+      this.setLobbyMon(o.mon, id);
       const lv = omLevel(S, id);
       const owned = !!S.om[id];
-      det.innerHTML = `<div class="row sb"><b style="font-size:15px">${escapeHtml(o.name)}</b><span class="note">${o.rare}・${o.kind}・${ELEM[o.elem].name}</span></div><p>${escapeHtml(o.desc)}</p><div class="note">${owned ? `Lv${lv}（効果 +${(lv - 1) * 8}%・待ち時間 ${Math.round(o.cd * (1 - (lv - 1) * 0.04))}秒）` : 'まだ持っていません（お守り袋から出ます）'}</div>`;
+      info.innerHTML = `<span class="rr" style="--r:${RARE_COLOR[o.rare]}">${o.rare}</span><div class="mn">${escapeHtml(o.name)}</div><div class="mv"><i style="background:${KIND_COLOR[o.kind]}">${o.kind}</i>${escapeHtml(o.move)}</div>`;
+      det.innerHTML = `<div class="dtop"><b>${escapeHtml(o.move)}</b><span class="chips"><span style="--c:${ELEM[o.elem].color}">${ELEM[o.elem].name}</span><span style="--c:${KIND_COLOR[o.kind]}">${KIND_NAME[o.kind]}</span><span>待ち ${Math.round(o.cd * (1 - (lv - 1) * 0.04))}秒</span></span></div><p>${escapeHtml(o.desc)}</p><div class="note">${owned ? `Lv${lv}（効果 +${(lv - 1) * 8}%）・上フリックで発動、下フリックでこの属性に変わる` : 'まだ持っていません（勝つともらえるディスクパックから出ます）'}</div>`;
     };
     const render = () => {
       const deck = S.decks[charId];
-      deckEl.innerHTML = deck.map((id, i) => card(id, sel && sel === id ? 'sel' : '')).join('');
+      deckEl.innerHTML = deck.map((id) => card(id, sel && sel === id ? 'sel' : '')).join('');
       grid.innerHTML = OMAMORI_IDS.map((id) => card(id, (deck.includes(id) ? 'inuse ' : '') + (sel === id ? 'sel' : ''))).join('');
+      $('.cnt', s).textContent = OMAMORI_IDS.filter((id) => S.om[id]).length + ' / ' + OMAMORI_IDS.length;
       $$('.deck4 .omcard', s).forEach((b, i) => (b.onclick = () => {
         if (sel && S.om[sel]) {
           const d = S.decks[charId];
@@ -990,21 +1104,22 @@ class App {
           sound.play('ui');
           sel = null;
           render();
-          showDet(d[i]);
+          show(d[i]);
         } else {
-          showDet(deck[i]);
+          show(deck[i]);
+          sound.play('ui');
         }
       }));
       $$('.omgrid .omcard', s).forEach((b) => (b.onclick = () => {
         const id = b.dataset.id;
         sel = sel === id ? null : id;
-        showDet(id);
+        show(id);
         render();
         sound.play('ui');
       }));
     };
     render();
-    showDet(null);
+    show(S.decks[charId][0]);
     $('.back', s).onclick = () => this.showHome();
     this.backHandler = () => this.showHome();
   }
@@ -1012,7 +1127,7 @@ class App {
   // ===== ランキング =====
   async showRanking(tab = 'w') {
     const s = this.setScreen(
-      `<div class="hdr"><button class="back">←</button><h2>ランキング</h2></div>
+      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>ランキング</h2></div>
        <div class="seg rk"><button data-t="w">今週</button><button data-t="a">ランク</button><button data-t="f">フレンド</button></div>
        <div class="card list" style="flex:1;overflow-y:auto;margin-top:10px;touch-action:pan-y"><p class="note">読みこみ中…</p></div>
        <div class="card me"></div>`,
@@ -1062,7 +1177,7 @@ class App {
   showSettings() {
     const st = this.settings;
     const s = this.setScreen(
-      `<div class="hdr"><button class="back">←</button><h2>せってい</h2></div>
+      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>せってい</h2></div>
        <div class="card">
          <div class="toggle"><span>ニックネーム：<b class="nm"></b></span><button class="btn small k rename">変える</button></div>
          <div class="field"><span>旋回の速さ <b class="sv"></b></span><input type="range" min="0.5" max="1.6" step="0.05" class="sens"></div>
@@ -1201,7 +1316,7 @@ class App {
         <b>下フリック</b><span>止まっているとき：バックステップ／飛んでいるとき：急ブレーキ</span>
         <b>上→下フリック</b><span>くるっと180度ターン（ロックオンは外れる）</span>
         <b>右のアイコン</b><span>タップでその敵をロックオン。近づくと自動でパンチ</span>
-        <b>下のアイコン</b><span>上フリックでスキル。お守りを下フリックで属性を変える</span>
+        <b>下のアイコン</b><span>上フリックでスキル（ディスクはモンスターが出て技を出す。溜め中に攻撃されると割れる）。ディスクを下フリックで属性を変える</span>
         <b>SPボタン</b><span>ゲージが満タンでスペシャル</span>
         <b>ロック中タップ</b><span>ダッシュ攻撃（ゲージ2つ）。相手の溜めをつぶせる</span>
       </div>
@@ -1333,7 +1448,7 @@ class App {
     const prizes = rw.prizes
       .map((pz, i) => {
         const o = OMAMORI[pz.id];
-        return `<div class="bag" style="animation-delay:${0.6 + i * 0.35}s"><div class="g" style="background:radial-gradient(circle, ${ELEM[o.elem].color}cc, ${ELEM[o.elem].color})">${o.icon}</div><div>${escapeHtml(o.name)}</div><div class="${pz.isNew ? 'new' : ''}">${pz.isNew ? 'NEW!' : pz.lvUp ? 'Lv' + pz.lv + 'にアップ！' : 'Lv' + pz.lv}</div></div>`;
+        return `<div class="bag" style="animation-delay:${0.6 + i * 0.35}s;--e:${ELEM[o.elem].color};--r:${RARE_COLOR[o.rare]}"><div class="g"><img alt="" src="${this.portraits.monster(o.mon, 128)}"></div><div class="nm">${escapeHtml(o.name)}</div><div class="${pz.isNew ? 'new' : ''}">${pz.isNew ? 'NEW!' : pz.lvUp ? 'Lv' + pz.lv + 'にアップ！' : 'Lv' + pz.lv}</div></div>`;
       })
       .join('');
     const s = this.setScreen(
@@ -1343,7 +1458,7 @@ class App {
        <div class="table"><div class="tr th"><span></span><span>名前</span><span>KO</span><span>ダウン</span><span>得点</span></div>${rows}</div>
        <div class="rpbox"><div class="row sb"><span>ランク <b style="color:#ffd400;font-size:18px">${rk.key}</b>${up ? ' <b style="color:#5dffa0">ランクアップ！</b>' : ''}</span><span>${rw.gain >= 0 ? '+' : ''}${rw.gain}pt（${S.rp}pt）</span></div>
        <div class="note">今週のポイント +${rw.weekPt}${rw.mvp ? '・MVPボーナス' : ''}</div>
-       ${rw.prizes.length ? `<div class="note" style="margin-top:6px;color:#ffd400">お守り袋を開けた！</div><div class="prize">${prizes}</div>` : ''}</div>
+       ${rw.prizes.length ? `<div class="note" style="margin-top:6px;color:#ffd400">ディスクパックを開けた！</div><div class="prize">${prizes}</div>` : ''}</div>
        <div style="flex:1"></div>
        <div class="row resbtns" style="width:100%;max-width:420px;gap:10px"><button class="btn k home" style="flex:1">${r.online ? '部屋を出る' : 'ホーム'}</button><button class="btn y again" style="flex:1.4">${r.online ? '部屋にもどる' : 'もう1回'}</button></div>`,
       'result scroll'
@@ -1377,4 +1492,5 @@ class App {
 
 window.addEventListener('DOMContentLoaded', () => {
   window.__app = new App();
+  window.__sound = sound; // テスト用
 });

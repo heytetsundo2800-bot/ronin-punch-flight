@@ -2,11 +2,24 @@
 import * as THREE from 'three';
 import { glowTex, toon, addOutline, canvasTex, sakuraTex, shareMark, disposeDeep } from './gfx.js';
 import { TEAM, ELEM } from './config.js';
-import { KIND_COLOR } from './characters.js';
+import { KIND_COLOR, OMAMORI } from './characters.js';
+import { buildMonster, poseMonster, summonSpot, monsterMouth, SUMMON_TURN, SUMMON_SCALE } from './monsters.js';
 import { rand, clamp, el } from './util.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
+const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+const easeOutBack = (k) => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
+// 技を出してから消えるまで（種類ごと）
+const ACT_DUR = { ATK: 0.75, HEAL: 0.9, BUFF: 0.9, TRAP: 0.8, WARP: 0.65, MOVE: 0.7 };
+// 呼び出しの光（六角の輪・光の柱・かけら）
+const hexGeo = shareMark(new THREE.RingGeometry(0.82, 1, 6, 1));
+const hexFill = shareMark(new THREE.CircleGeometry(0.8, 6));
+const beamGeo = shareMark(new THREE.CylinderGeometry(1, 1, 1, 18, 1, true));
+const shardGeo = shareMark(new THREE.TetrahedronGeometry(0.2, 0));
+const shardMats = new Map();
+const shardMat = (c) => shardMats.get(c) || (shardMats.set(c, shareMark(new THREE.MeshBasicMaterial({ color: c }))), shardMats.get(c));
 
 // ===== つぶ（Points でまとめて描く）=====
 class Particles {
@@ -189,36 +202,109 @@ const ringGeo = shareMark(new THREE.RingGeometry(0.85, 1, 48));
 // 飛び道具の形と色は使い回す（1発ごとに作るとGPUのメモリがふえていく）
 const PC = {};
 const pcache = (key, make) => PC[key] || (PC[key] = shareMark(make()));
+const addSpr = (m, key, color, size, opacity = 0.85, z = 0) => {
+  const s = new THREE.Sprite(pcache(key, () => new THREE.SpriteMaterial({ map: glowTex(), color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending })));
+  s.scale.set(size, size, 1);
+  s.position.z = z;
+  m.add(s);
+  return s;
+};
+const addMat = (key, color, op = 1) =>
+  pcache(key, () => {
+    const mt = new THREE.MeshBasicMaterial({ color, transparent: op < 1, opacity: op, depthWrite: op >= 1 });
+    if (op < 1) mt.blending = THREE.AdditiveBlending;
+    return mt;
+  });
+// モンスターの技の弾（前が +Z）
 function projTemplate(k) {
   const m = new THREE.Group();
   if (k === 'akahon') {
-    const book = new THREE.Mesh(pcache('akG', () => new THREE.BoxGeometry(0.9, 1.2, 0.35)), toon(0xd8202a));
-    addOutline(book, 0x3a0a0a, 0.05);
-    book.rotation.x = Math.PI / 2;
-    m.add(book);
-    const glow = new THREE.Sprite(pcache('akS', () => new THREE.SpriteMaterial({ map: glowTex(), color: 0xff5a3d, transparent: true, opacity: 0.7, depthWrite: false })));
-    glow.scale.set(3, 3, 1);
-    m.add(glow);
+    // ブレイズドレイク：追いかける火の玉
+    m.add(new THREE.Mesh(pcache('fbCore', () => new THREE.IcosahedronGeometry(0.42, 1)), addMat('fbCoreM', 0xfff0a0)));
+    const shell = new THREE.Mesh(pcache('fbShell', () => new THREE.IcosahedronGeometry(0.62, 1)), addMat('fbShellM', 0xff6a1a, 0.55));
+    m.add(shell);
+    const tail = new THREE.Mesh(pcache('fbTail', () => new THREE.ConeGeometry(0.55, 2.2, 10, 1, true)), addMat('fbTailM', 0xff8a2a, 0.5));
+    tail.rotation.x = -Math.PI / 2;
+    tail.position.z = -1.2;
+    m.add(tail);
+    addSpr(m, 'fbS', 0xff7a2a, 3.4, 0.75);
+    m.userData.trail = 0xff8a2a;
   } else if (k === 'tangocho') {
-    for (let i = 0; i < 3; i++) {
-      const c = new THREE.Mesh(pcache('tgG', () => new THREE.BoxGeometry(1.2, 0.05, 0.7)), toon(i === 1 ? 0x38d16a : 0xffffff));
-      c.rotation.y = (i / 3) * Math.PI;
-      c.position.y = i * 0.06;
-      m.add(c);
+    // ゲイルファルコン：回るかまいたち（三日月の刃）
+    const crescent = pcache('wbG', () => {
+      const s = new THREE.Shape();
+      s.absarc(0, 0, 1.0, 0.25 * Math.PI, 1.75 * Math.PI, false);
+      s.absarc(0.38, 0, 0.78, 1.6 * Math.PI, 0.4 * Math.PI, true);
+      const g = new THREE.ShapeGeometry(s, 16);
+      g.rotateX(-Math.PI / 2);
+      return g;
+    });
+    const mat = pcache('wbM', () => new THREE.MeshBasicMaterial({ color: 0xd8ffb0, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+    for (let i = 0; i < 2; i++) {
+      const b = new THREE.Mesh(crescent, mat);
+      b.rotation.y = i * Math.PI;
+      b.scale.setScalar(0.85);
+      m.add(b);
     }
-    const ring = new THREE.Mesh(pcache('tgR', () => new THREE.TorusGeometry(0.2, 0.04, 6, 12)), toon(0xc0c0c0));
-    ring.rotation.x = Math.PI / 2;
-    m.add(ring);
+    addSpr(m, 'wbS', 0x9dff4a, 2.6, 0.6);
+    m.userData.trail = 0x9dff4a;
   } else if (k === 'pencil') {
-    const body = new THREE.Mesh(pcache('pnB', () => new THREE.CylinderGeometry(0.16, 0.16, 1.6, 6)), toon(0xffc93c));
-    body.rotation.x = Math.PI / 2;
-    m.add(body);
-    const tip = new THREE.Mesh(pcache('pnT', () => new THREE.ConeGeometry(0.16, 0.45, 6)), toon(0xf2d0a0));
-    tip.rotation.x = Math.PI / 2;
-    tip.position.z = 1.0;
-    m.add(tip);
+    // ランスナーヴァル：まっすぐ速い水の槍
+    const lance = new THREE.Mesh(pcache('alG', () => new THREE.ConeGeometry(0.2, 2.0, 10)), addMat('alM', 0xdaf8ff));
+    lance.rotation.x = Math.PI / 2;
+    lance.position.z = 0.3;
+    m.add(lance);
+    const sheath = new THREE.Mesh(pcache('alG2', () => new THREE.ConeGeometry(0.36, 2.6, 12, 1, true)), addMat('alM2', 0x3be6ff, 0.45));
+    sheath.rotation.x = Math.PI / 2;
+    sheath.position.z = 0.05;
+    m.add(sheath);
+    for (let i = 0; i < 3; i++) {
+      const r = new THREE.Mesh(pcache('alR', () => new THREE.TorusGeometry(0.34, 0.035, 6, 24)), addMat('alRM', 0x9af6ff, 0.8));
+      r.position.z = -0.4 - i * 0.45;
+      r.scale.setScalar(1 + i * 0.25);
+      m.add(r);
+    }
+    addSpr(m, 'alS', 0x3be6ff, 2.4, 0.7, 0.6);
+    m.userData.trail = 0x6ad8ff;
   }
   return m;
+}
+// ロビー（ディスク画面）用：技の弾の見た目だけ
+export function projectileLook(kind) {
+  return pcache('tpl_' + kind, () => projTemplate(kind)).clone();
+}
+// 方眼の結界（グリッドオクトパス）
+const gridTexCache = {};
+function gridTex(team) {
+  if (gridTexCache[team]) return gridTexCache[team];
+  const col = TEAM[team].color;
+  const t = canvasTex(256, 256, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 3;
+    const R = 16;
+    for (let y = -1; y < 12; y++)
+      for (let x = -1; x < 10; x++) {
+        const cx = x * R * 1.732 + (y % 2 ? R * 0.866 : 0), cy = y * R * 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+          ctx[i ? 'lineTo' : 'moveTo'](cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(0.92, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+  t.userData.shared = true;
+  gridTexCache[team] = t;
+  return t;
 }
 
 export class FX {
@@ -233,12 +319,30 @@ export class FX {
     this.labels = [];
     this.auras = new Map();
     this.camPos = new THREE.Vector3();
+    this.summons = new Map(); // ディスクのモンスター（人ごとに1体）
+    this.leaving = []; // 次のモンスターに替わって、消えていくところのモンスター
+    this.shards = [];
+    this.beams = [];
+    this.projMeshes = new Set();
+    this.time = 0;
   }
 
   // ===== 毎フレーム =====
   update(dt, cam) {
     this.camPos.copy(cam.position);
+    this.time += dt;
     this.parts.update(dt);
+    this.updateSummons(dt);
+    this.updateShards(dt);
+    // 技の弾のうしろの光
+    for (const m of this.projMeshes) {
+      if (!m.parent) {
+        this.projMeshes.delete(m);
+        continue;
+      }
+      const c = m.userData.trail;
+      if (c && m.visible && Math.random() < dt * 45) this.parts.emit(m.position.x + rand(-0.2, 0.2), m.position.y + rand(-0.2, 0.2), m.position.z + rand(-0.2, 0.2), rand(-1, 1), rand(-1, 1), rand(-1, 1), 0.38, 1.1, 0.1, c, 2);
+    }
     // 足もとの光
     for (const p of this.match.punchers) {
       let tr = this.trails.get(p);
@@ -347,8 +451,8 @@ export class FX {
     this.ring(t.pos, 0x7ad0ff, 1.2, 1.7, 0.2, true, 0.7);
   }
 
-  ring(pos, color, r0, r1, life, face = false, op = 0.9) {
-    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  ring(pos, color, r0, r1, life, face = false, op = 0.9, geo = ringGeo) {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
     m.position.copy(pos);
     if (!face) m.rotation.x = -Math.PI / 2;
     m.scale.setScalar(r0);
@@ -443,12 +547,226 @@ export class FX {
     if (p.isPlayer) this.num(_v.copy(p.pos).add(new THREE.Vector3(0, 1.8, 0)), ELEM[p.elem].name + 'に変えた', 'elem', 0.9, 0.8);
   }
   chargeIcon(p, om) {
-    // 溜めの合図（光の輪）
+    // 溜めの合図（光の輪）＋ディスクのモンスターを呼ぶ
     this.ring(p.pos, new THREE.Color(KIND_COLOR[om.kind]).getHex(), 0.3, 1.8, 0.5, true, 0.9);
+    this.summon(p, om);
   }
   chargeBreak(p) {
     this.num(_v.copy(p.pos).add(new THREE.Vector3(0, 1.8, 0)), 'キャンセル!', 'break', 0.8, 1);
     for (let i = 0; i < 14; i++) this.parts.emit(p.pos.x, p.pos.y + 1, p.pos.z, rand(-6, 6), rand(-2, 6), rand(-6, 6), 0.5, 0.7, 0.1, 0xcccccc, 2, 8);
+    const s = this.summons.get(p);
+    if (s) this.shatter(s);
+  }
+
+  // ===== ディスクのモンスター =====
+  // 溜めはじめにキャラの横へ呼び出す → 技を出す（summonAct）→ 消える。溜めを止められたら割れる
+  summon(p, om) {
+    if (!om || !om.mon || !p.pos) return;
+    const old = this.summons.get(p);
+    if (old) {
+      // 前のモンスターは消える動きを最後まで見せる（別のリストで動かす）
+      this.summons.delete(p);
+      this.leaveSummon(old);
+      this.leaving.push(old);
+    }
+    const g = buildMonster(om.mon);
+    g.rotation.order = 'YXZ';
+    // 重いとき（軽い画質）は、ふちどりを消す
+    if (this.match.app && this.match.app.lowGfx) g.traverse((o) => o.name === 'outline' && (o.visible = false));
+    const base = g.scale.x * SUMMON_SCALE;
+    const s = { p, om, g, base, phase: 'appear', t: 0, age: 0, wait: 0, pos: new THREE.Vector3(), yaw: (p.yaw || 0) + SUMMON_TURN, target: null, actDur: 0.75 };
+    summonSpot(p, s.pos);
+    g.position.copy(s.pos);
+    g.scale.setScalar(0.01);
+    this.scene.add(g);
+    this.summons.set(p, s);
+    this.portal(s, true);
+    this.sfx(om.rare === 'SR' || om.rare === 'UR' ? 'summonSR' : 'summon', p);
+  }
+  // この端末だけで鳴らす（オンラインでは、えフェクトといっしょに各端末で鳴る）
+  sfx(name, p) {
+    const M = this.match;
+    const f = M.sfxLocal || M.sfx;
+    if (f) f.call(M, name, p);
+  }
+  // 呼び出しの光（レア度が高いほど派手）
+  portal(s, open) {
+    const om = s.om;
+    const c = ELEM[om.elem].hex;
+    const pos = s.pos;
+    const rank = om.rare === 'SR' || om.rare === 'UR' ? 2 : om.rare === 'R' ? 1 : 0;
+    this.ring(pos, c, 0.4, 2.6 + rank * 0.6, 0.45, true, 0.95, hexGeo);
+    this.ring(pos, 0xffffff, 0.2, 1.4 + rank * 0.4, 0.3, true, 0.8, hexGeo);
+    if (open) this.ring(pos, c, 0.3, 1.2, 0.25, true, 0.5, hexFill);
+    const n = 14 + rank * 12;
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, 6.28), sp = rand(3, 7 + rank * 2);
+      this.parts.emit(pos.x, pos.y, pos.z, Math.cos(a) * sp, rand(-3, 4), Math.sin(a) * sp, rand(0.3, 0.55), rand(0.6, 1.2), 0.1, i % 3 ? c : 0xffffff, 3);
+    }
+    if (rank >= 2 && open) {
+      // 光の柱
+      const mat = new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+      const m = new THREE.Mesh(beamGeo, mat);
+      m.position.copy(pos);
+      m.scale.set(1.1, 14, 1.1);
+      this.scene.add(m);
+      this.beams.push({ m, t: 0, life: 0.55 });
+      if (s.p === this.match.player && this.match.screenFlash) this.match.screenFlash('#' + new THREE.Color(c).getHexString(), 0.12);
+    }
+  }
+  summonAct(p, id) {
+    const om = OMAMORI[id];
+    if (!om) return;
+    let s = this.summons.get(p);
+    if (!s || s.om.id !== id || s.phase === 'leave') {
+      // 呼び出しが届かなかったとき（遅れて入ったなど）は、ここで呼ぶ
+      this.summon(p, om);
+      s = this.summons.get(p);
+      if (!s) return;
+    }
+    s.phase = 'act';
+    s.t = 0;
+    s.actDur = ACT_DUR[om.kind] || 0.75;
+    if (s.g.scale.x < s.base * 0.6) s.g.scale.setScalar(s.base * 0.6);
+    const c = ELEM[om.elem].hex;
+    monsterMouth(p, om.mon, _v);
+    this.ring(_v, c, 0.2, 1.8, 0.3, true, 0.95);
+    if (om.rare === 'SR' || om.rare === 'UR') this.ring(_v, 0xffffff, 0.3, 3.0, 0.35, true, 0.7, hexGeo);
+    if (om.kind === 'HEAL' || om.kind === 'BUFF') {
+      // モンスターから力をもらう光
+      for (let i = 0; i < 22; i++) {
+        _v2.subVectors(p.pos, s.pos).multiplyScalar(rand(2.4, 3.4));
+        this.parts.emit(s.pos.x + rand(-0.4, 0.4), s.pos.y + rand(-0.4, 0.4), s.pos.z + rand(-0.4, 0.4), _v2.x + rand(-1, 1), _v2.y + rand(-1, 1), _v2.z + rand(-1, 1), 0.4, 1.0, 0.2, i % 2 ? c : 0xffffff, 1.5);
+      }
+    } else if (om.kind === 'TRAP') {
+      s.target = p.pos.clone(); // その場所へもぐりこむ
+    } else if (om.kind === 'WARP') {
+      this.ring(p.pos, c, 0.4, 3.2, 0.4, true, 0.9, hexGeo);
+    }
+  }
+  removeSummon(s) {
+    if (s.g.parent) s.g.parent.remove(s.g);
+    if (this.summons.get(s.p) === s) this.summons.delete(s.p);
+    const i = this.leaving.indexOf(s);
+    if (i >= 0) this.leaving.splice(i, 1);
+  }
+  leaveSummon(s) {
+    if (s.phase === 'leave') return;
+    s.phase = 'leave';
+    s.t = 0;
+  }
+  // 溜めを止められた：モンスターが割れて消える
+  shatter(s) {
+    const c = ELEM[s.om.elem].hex;
+    const pos = s.g.position;
+    for (let i = 0; i < 16; i++) {
+      const m = new THREE.Mesh(shardGeo, shardMat(i % 3 ? c : 0xffffff));
+      m.position.set(pos.x + rand(-0.5, 0.5), pos.y + rand(-0.4, 0.5), pos.z + rand(-0.5, 0.5));
+      const sc = rand(0.6, 1.4) * s.base;
+      m.scale.setScalar(sc);
+      this.scene.add(m);
+      this.shards.push({ m, v: new THREE.Vector3(rand(-7, 7), rand(-1, 7), rand(-7, 7)), w: new THREE.Vector3(rand(-12, 12), rand(-12, 12), rand(-12, 12)), t: 0, life: rand(0.45, 0.75), s0: sc });
+    }
+    this.ring(pos, c, 0.4, 2.4, 0.3, true, 0.9, hexGeo);
+    for (let i = 0; i < 14; i++) this.parts.emit(pos.x, pos.y, pos.z, rand(-6, 6), rand(-3, 6), rand(-6, 6), 0.4, 0.8, 0.1, c, 3);
+    this.sfx('shatter', s.p);
+    this.removeSummon(s);
+  }
+  updateShards(dt) {
+    for (let i = this.shards.length - 1; i >= 0; i--) {
+      const q = this.shards[i];
+      q.t += dt;
+      q.v.y -= 14 * dt;
+      q.m.position.addScaledVector(q.v, dt);
+      q.m.rotation.x += q.w.x * dt;
+      q.m.rotation.y += q.w.y * dt;
+      q.m.rotation.z += q.w.z * dt;
+      const k = q.t / q.life;
+      q.m.scale.setScalar(Math.max(0.001, q.s0 * (1 - k * k)));
+      if (k >= 1) {
+        this.scene.remove(q.m);
+        this.shards.splice(i, 1);
+      }
+    }
+    for (let i = this.beams.length - 1; i >= 0; i--) {
+      const b = this.beams[i];
+      b.t += dt;
+      const k = b.t / b.life;
+      b.m.material.opacity = 0.7 * (1 - k);
+      const w = 1.1 * (1 - k * 0.8);
+      b.m.scale.set(w, 14, w);
+      if (k >= 1) {
+        this.scene.remove(b.m);
+        b.m.material.dispose();
+        this.beams.splice(i, 1);
+      }
+    }
+  }
+  updateSummons(dt) {
+    for (const s of [...this.summons.values(), ...this.leaving]) {
+      const p = s.p, g = s.g, U = g.userData;
+      s.t += dt;
+      s.age += dt;
+      if (!p.alive && s.phase !== 'leave') {
+        this.shatter(s);
+        continue;
+      }
+      if (s.age > 6 && s.phase !== 'leave') this.leaveSummon(s);
+      summonSpot(p, _v);
+      if (s.target && (s.phase === 'act' || s.phase === 'leave')) {
+        // 罠：その場所へ飛びこんで、そこで消える
+        const k = s.phase === 'leave' ? 1 : Math.min(1, s.t / (s.actDur * 0.6));
+        _v.lerp(s.target, k * k);
+      }
+      s.pos.lerp(_v, 1 - Math.exp(-14 * dt));
+      s.yaw = lerpAngle(s.yaw, (p.yaw || 0) + SUMMON_TURN, 1 - Math.exp(-10 * dt));
+      let scale = s.base;
+      let ph = s.phase, k = 0;
+      const charging = p.charge && p.charge.id === s.om.id;
+      if (s.phase === 'appear') {
+        const a = Math.min(1, s.t / 0.24);
+        scale = s.base * Math.max(0.01, easeOutBack(a));
+        ph = 'charge';
+        k = 0;
+        if (a >= 1) {
+          s.phase = 'charge';
+          s.t = 0;
+        }
+      } else if (s.phase === 'charge') {
+        k = Math.min(1, s.t / 0.8);
+        // 溜めが終わったのに技が来ない（届かない）ときは、少し待って消す
+        if (!charging) {
+          s.wait += dt;
+          if (s.wait > 0.6) this.leaveSummon(s);
+        } else s.wait = 0;
+        if (Math.random() < dt * 24) {
+          const c = ELEM[s.om.elem].hex;
+          const a = rand(0, 6.28);
+          this.parts.emit(s.pos.x + Math.cos(a) * 1.2, s.pos.y - 0.8, s.pos.z + Math.sin(a) * 1.2, -Math.cos(a) * 1.5, rand(2, 4), -Math.sin(a) * 1.5, 0.45, 0.6, 0.1, c, 1);
+        }
+      } else if (s.phase === 'act') {
+        k = Math.min(1, s.t / s.actDur);
+        if (k >= 1) this.leaveSummon(s);
+      } else if (s.phase === 'leave') {
+        const a = Math.min(1, s.t / 0.3);
+        scale = s.base * (1 - a) * (1 + a * 0.3);
+        ph = 'idle';
+        if (a >= 1) {
+          const c = ELEM[s.om.elem].hex;
+          for (let i = 0; i < 10; i++) this.parts.emit(g.position.x, g.position.y, g.position.z, rand(-3, 3), rand(1, 6), rand(-3, 3), 0.4, 0.9, 0.1, c, 2);
+          this.removeSummon(s);
+          continue;
+        }
+      }
+      poseMonster(g, ph, k, s.age);
+      const f = p.flatFwd || _v3.set(0, 0, 1);
+      g.position.copy(s.pos).addScaledVector(f, U.push * s.base);
+      g.position.y += (U.lift - U.dive * 1.2) * s.base;
+      g.rotation.set(U.tilt || 0, s.yaw, 0);
+      g.scale.setScalar(scale);
+      // 見えない人（倒された・遠い）は描かない
+      g.visible = p.model ? p.model.visible !== false || p === this.match.player : true;
+    }
   }
   skillName(p, name, om) {
     // 画面に出るのは近くの人だけ
@@ -481,23 +799,31 @@ export class FX {
     }
     m.position.copy(o.pos);
     this.scene.add(m);
+    if (m.userData && m.userData.trail) this.projMeshes.add(m);
     return m;
   }
   areaMesh(a) {
     const g = new THREE.Group();
     if (a.kind === 'mine') {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.5, 0.7), toon(0xffffff));
-      addOutline(m, 0x333333, 0.05);
-      g.add(m);
-      const band = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.52, 0.35), toon(0x3a6cff));
-      g.add(band);
+      // ボムビートルがうずくまって待つ
+      const b = buildMonster('beetle');
+      b.scale.setScalar(0.5);
+      // 小さいので、ふちどりは描かない（描く数をへらす）
+      b.traverse((o) => o.name === 'outline' && (o.visible = false));
+      b.rotation.y = rand(0, 6.28);
+      g.add(b);
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[a.team].hex, transparent: true, opacity: 0.8, depthWrite: false }));
-      glow.scale.set(2.5, 2.5, 1);
+      glow.scale.set(2.8, 2.8, 1);
       g.add(glow);
+      g.userData.blink = glow;
     } else {
       const disc = new THREE.Mesh(new THREE.CircleGeometry(a.r, 40), new THREE.MeshBasicMaterial({ color: TEAM[a.team].hex, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
       disc.rotation.x = -Math.PI / 2;
       g.add(disc);
+      const grid = new THREE.Mesh(new THREE.CircleGeometry(a.r * 0.98, 40), new THREE.MeshBasicMaterial({ map: gridTex(a.team), transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+      grid.rotation.x = -Math.PI / 2;
+      grid.position.y = 0.05;
+      g.add(grid);
       const ring = new THREE.Mesh(new THREE.RingGeometry(a.r - 0.3, a.r, 48), new THREE.MeshBasicMaterial({ color: TEAM[a.team].hex, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
       ring.rotation.x = -Math.PI / 2;
       g.add(ring);
@@ -510,6 +836,15 @@ export class FX {
   }
 
   clear() {
+    for (const s of [...this.summons.values(), ...this.leaving]) this.removeSummon(s);
+    for (const q of this.shards) this.scene.remove(q.m);
+    this.shards.length = 0;
+    for (const b of this.beams) {
+      this.scene.remove(b.m);
+      b.m.material.dispose();
+    }
+    this.beams.length = 0;
+    this.projMeshes.clear();
     for (const [, tr] of this.trails) tr.forEach((t) => t.dispose(this.scene));
     this.trails.clear();
     for (const r of this.rings) this.scene.remove(r.mesh);
