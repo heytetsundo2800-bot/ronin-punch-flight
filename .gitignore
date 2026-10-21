@@ -1,0 +1,7 @@
+node_modules/
+public/
+.vercel
+*.log
+.DS_Store
+tools/test/*.bundle.js
+tools/assets/*.bundle.js
