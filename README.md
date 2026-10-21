@@ -29,6 +29,15 @@
 - **フラッグフライト**：敵陣に出る自分の色の旗をゴールへ。先に3本で勝ち
 - **ラピッドボール**：敵のダルマを倒してリングを開け、ボールを持ってくぐる。残り1分で10点のボール
 
+## ステージ
+
+ホームの「ステージ」を押すと切りかわる（おまかせ＝毎回どちらか）。オンラインの部屋ではホストが選ぶ。
+
+- **サクラ浮島**（昼）：合格祈願の神社がうかぶ空。まん中に本殿、くぐれる鳥居
+- **あこがれキャンパス**（夕焼け）：受かったら通いたい大学。まん中に時計台、中くらいの島どうしを渡り廊下がつなぐ（上も下も通れる）。陣地には校門、あずまや・天文台・校舎の屋上にもサクラ
+
+陣地・ダルマ・ゴールリングの場所はどちらも同じ。
+
 ## フレンドとオンライン対戦（ベータ）
 
 ホームの「フレンドとオンライン対戦」→「部屋をつくる」で5けたの部屋コードが出る。LINEで招待リンクを送るか、コードを入れてもらう。最大8人、あいた席はCPU。
@@ -36,6 +45,7 @@
 - つなぎかた：サーバー（`/api/rpf`）は最初のあいさつ（WebRTC の SDP）を受けわたすだけ。試合中は端末どうしが直接つながる
 - 部屋をつくった人（ホスト）の端末が、CPU・当たり判定・ルールを計算して、みんなに状態を送る（1秒に20回）
 - 入った人は、自分のキャラだけその場で動かす（操作のおくれをなくす）。ほかの人は少し前の状態をなめらかにつないで表示する
+- 試合中は味方にスタンプ（ナイス！・集まれ！など）を送れる。人の頭の上に名前と体力、右上に通信の速さ（ms）
 - つながらない組み合わせ（モバイル回線どうし・学校のWi-Fiなど）があるときは、TURN サーバーを足すとつながりやすくなる（下の環境変数）
 
 ## キャラ
@@ -64,4 +74,4 @@ npm run build    # 本番ビルド（Vercel もこれを実行）
 - または `CF_TURN_KEY_ID` と `CF_TURN_KEY_TOKEN`：Cloudflare の TURN
 - または `RPF_ICE`：ICE サーバーの JSON 配列をそのまま
 
-テスト：`node tools/api/api_test.js`、`node tools/api/room_test.js`、`node tools/api/devserver.js --port 8813` を動かして `python3 tools/acct_e2e.py`・`python3 tools/online_e2e.py [scramble|flag|ball]`・`python3 tools/online_lag.py 150 80 0.1`
+テスト：`node tools/api/api_test.js`、`node tools/api/room_test.js`、`node tools/api/devserver.js --port 8813` を動かして `python3 tools/acct_e2e.py`・`python3 tools/online_e2e.py [scramble|flag|ball] [sakura|campus]`・`python3 tools/online_lag.py 150 80 0.1`・`python3 tools/stage_test.py`（ステージの物がサクラやボールにめりこんでいないか）
