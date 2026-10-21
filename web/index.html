@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>浪人パンチフライト</title>
 <meta name="description" content="一浪の空で、殴りあえ。4対4の360°空中バトル。スマホでそのまま遊べる無料ゲーム。">
-<meta name="theme-color" content="#ffd400">
+<meta name="theme-color" content="#070a14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -20,10 +20,18 @@
 <meta property="og:image" content="__ORIGIN__/og.png">
 <meta property="og:url" content="__ORIGIN__/">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="/cp-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/cp-700i.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css?v=__VER__">
 <style>
-#boot{position:fixed;inset:0;display:grid;place-items:center;background:#ffd400;color:#111;font:900 22px/1.4 'Hiragino Maru Gothic ProN','Hiragino Sans',sans-serif;z-index:99;transition:opacity .4s}
-#boot b{display:block;font-size:13px;font-weight:700;opacity:.7;text-align:center}
+@font-face{font-family:'Chakra Petch';font-style:normal;font-weight:600;font-display:swap;src:url(/cp-600.woff2) format('woff2')}
+@font-face{font-family:'Chakra Petch';font-style:normal;font-weight:700 900;font-display:swap;src:url(/cp-700.woff2) format('woff2')}
+@font-face{font-family:'Chakra Petch';font-style:italic;font-weight:600 900;font-display:swap;src:url(/cp-700i.woff2) format('woff2')}
+#boot{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(120% 70% at 50% 0%,#12305e,#04060d 70%);color:#fff;font:700 22px/1.4 'Chakra Petch','Hiragino Sans',sans-serif;z-index:99;transition:opacity .4s;text-align:center;letter-spacing:.04em}
+#boot div{font-style:italic;color:#ffde2e;text-shadow:0 0 16px rgba(255,196,0,.5)}
+#boot b{display:block;margin-top:10px;font-size:12px;font-weight:700;font-style:normal;color:#9af6ff;letter-spacing:.3em}
+#boot b::after{content:'';display:block;width:120px;height:2px;margin:10px auto 0;background:linear-gradient(90deg,transparent,#3be6ff,transparent);animation:bootbar 1s linear infinite}
+@keyframes bootbar{0%{transform:translateX(-60px)}100%{transform:translateX(60px)}}
 </style>
 </head>
 <body>
@@ -34,8 +42,8 @@
   <div id="fx" class="fxlayer"></div>
   <div id="screens"></div>
 </div>
-<div id="rotate"><div><div class="ph">📱</div><p>スマホを<b>たて向き</b>にしてね</p><button type="button" onclick="document.body.classList.add('rot-ok')">このまま遊ぶ</button></div></div>
-<div id="boot"><div>浪人パンチフライト<b>よみこみ中…</b></div></div>
+<div id="rotate"><div><div class="ph"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10.5 18h3"/><path d="M20.5 9.5a8.5 8.5 0 0 0-3.4-5.6"/><path d="m21 6.3-.5 3.3-3.2-.8"/></svg></div><p>スマホを<b>たて向き</b>にしてね</p><button type="button" onclick="document.body.classList.add('rot-ok')">このまま遊ぶ</button></div></div>
+<div id="boot"><div>浪人パンチフライト<b>LOADING</b></div></div>
 <noscript>JavaScript をオンにしてください。</noscript>
 <script>
 window.addEventListener('error',function(e){try{var b=document.getElementById('boot');if(b&&b.style.opacity!=='0'){b.querySelector('b').textContent='エラー：'+(e.message||'');}}catch(_){}});

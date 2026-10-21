@@ -1,11 +1,12 @@
 // 浪人パンチフライト：オフラインでも開けるようにする
 const CACHE = 'rpf-__VER__';
-const CORE = ['/', '/index.html', '/app.js?v=__VER__', '/app.css?v=__VER__', '/manifest.json', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const MEDIA = 'rpf-media-__MVER__'; // 曲（大きいので、曲が変わったときだけ入れかえる）
+const CORE = ['/', '/index.html', '/app.js?v=__VER__', '/app.css?v=__VER__', '/manifest.json', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/cp-600.woff2', '/cp-700.woff2', '/cp-700i.woff2'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE).catch(() => {})).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== MEDIA).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', (e) => {
   const u = new URL(e.request.url);
@@ -23,14 +24,15 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
+  const store = /\.(m4a|mp3)$/.test(u.pathname) ? MEDIA : CACHE;
   e.respondWith(
     caches.match(e.request).then(
       (hit) =>
         hit ||
         fetch(e.request).then((r) => {
-          if (r.ok) {
+          if (r.ok && r.status === 200) {
             const c = r.clone();
-            caches.open(CACHE).then((ca) => ca.put(e.request, c));
+            caches.open(store).then((ca) => ca.put(e.request, c));
           }
           return r;
         })
