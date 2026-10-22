@@ -1,8 +1,8 @@
 // キャラの顔アイコン・全身の絵を3Dモデルから作る
 import * as THREE from 'three';
-import { buildPuncher, poseModel } from './model.js';
+import { buildPuncher, poseModel, FACES } from './model.js';
 import { buildMonster, poseMonster } from './monsters.js';
-import { disposeDeep } from './gfx.js';
+import { disposeDeep, OUTLINE } from './gfx.js';
 import { PUNCHERS } from './characters.js';
 import { TEAM } from './config.js';
 
@@ -17,15 +17,20 @@ export class Portraits {
     this.scene.add(sun);
     this.cam = new THREE.PerspectiveCamera(30, 1, 0.05, 50);
   }
-  render(id, team, kind, w0, h0) {
-    const key = id + '|' + team + '|' + kind + '|' + w0;
+  render(id, team, kind, w0, h0, facing = 1) {
+    const key = id + '|' + team + '|' + kind + '|' + w0 + '|' + facing;
     if (this.cache.has(key)) return this.cache.get(key);
     const w = w0 * 2, h = h0 * 2; // 2倍で描いて縮める（ギザギザを消す）
     const R = this.renderer;
     const model = buildPuncher(PUNCHERS[id], team);
     this.scene.add(model);
-    const st = { mode: kind === 'face' ? 'hover' : kind, t: 0.6, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.35, heavy: false, runPhase: 0, snap: true };
+    const calm = kind === 'face' || kind === 'bust';
+    const hero = kind.startsWith('hero:'); // 結果画面の大きな絵（ひざから上）
+    const mode = calm ? 'hover' : kind === 'cut' ? 'cutin' : hero ? kind.slice(5) : kind;
+    // 顔アイコンは目を開けたふつうの顔（まばたきの途中で撮らない）
+    const st = { mode, t: 0.6, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.35, heavy: false, runPhase: 0, snap: true, face: calm ? FACES.neutral : -1 };
     poseModel(model, st, 1);
+    if (kind === 'cut' && model.userData.glasses) model.userData.glasses.visible = false; // アオッチ：メガネを外したところ
     model.updateMatrixWorld(true);
     const head = model.userData.parts.head;
     const hp = new THREE.Vector3();
@@ -40,6 +45,21 @@ export class Portraits {
       cam.fov = 30;
       cam.position.set(hp.x + 0.6, hp.y - 0.1, hp.z + 2.4);
       cam.lookAt(hp.x, hp.y - 0.35, hp.z);
+    } else if (hero) {
+      model.rotation.y = -0.32;
+      model.updateMatrixWorld(true);
+      head.getWorldPosition(hp);
+      cam.fov = 34;
+      cam.position.set(hp.x + 0.18, hp.y - 0.3, hp.z + 2.6);
+      cam.lookAt(hp.x, hp.y - 0.32, hp.z);
+    } else if (kind === 'cut') {
+      // カットイン：上半身を少し下から（強そうに見える）。体は画面の内がわを向く
+      model.rotation.y = -0.42 * facing;
+      model.updateMatrixWorld(true);
+      head.getWorldPosition(hp);
+      cam.fov = 34;
+      cam.position.set(hp.x - 0.2 * facing, hp.y - 0.24, hp.z + 1.5);
+      cam.lookAt(hp.x - 0.05 * facing, hp.y - 0.17, hp.z);
     } else {
       // 全身（スペシャル・勝ちポーズなど）
       model.rotation.y = 0.35;
@@ -59,6 +79,10 @@ export class Portraits {
     const R = this.renderer;
     const cam = this.cam;
     const rt = new THREE.WebGLRenderTarget(w, h, { samples: 0 });
+    // 線の太さは、この絵の大きさで決める（画面の大きさのままだと細くなりすぎる）
+    const oRes = OUTLINE.res.value.clone(), oPx = OUTLINE.px.value;
+    OUTLINE.res.value.set(w, h);
+    OUTLINE.px.value = 2.4;
     rt.texture.colorSpace = THREE.SRGBColorSpace;
     const prevT = R.getRenderTarget();
     const prevC = R.getClearColor(new THREE.Color());
@@ -69,6 +93,8 @@ export class Portraits {
     R.render(this.scene, cam);
     const px = new Uint8Array(w * h * 4);
     R.readRenderTargetPixels(rt, 0, 0, w, h, px);
+    OUTLINE.res.value.copy(oRes);
+    OUTLINE.px.value = oPx;
     R.setRenderTarget(prevT);
     R.setClearColor(prevC, prevA);
     rt.dispose();
@@ -146,6 +172,19 @@ export class Portraits {
   }
   full(id, team, pose = 'special') {
     return this.render(id, team, pose, 384, 512);
+  }
+  // 大きく見せる絵は、こまかい画面（iPhone など）では少し大きく作る（ぼやけないように。作る時間とのかねあいで 1.3 倍まで）
+  big(n) {
+    const k = typeof window !== 'undefined' && (window.devicePixelRatio || 1) >= 2 ? 1.3 : 1;
+    return Math.round(n * k);
+  }
+  // 結果画面の絵（pose: win / lose / hover）
+  hero(id, team, pose = 'win') {
+    return this.render(id, team, 'hero:' + pose, this.big(320), this.big(400));
+  }
+  // スペシャルのカットインの絵（上半身。facing: 1 = 左を向く / -1 = 右を向く）
+  cut(id, team, facing = 1) {
+    return this.render(id, team, 'cut', this.big(420), this.big(360), facing);
   }
 }
 

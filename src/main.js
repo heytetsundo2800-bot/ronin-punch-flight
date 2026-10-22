@@ -19,7 +19,9 @@ import { Room } from './room.js';
 import { HostMatch, ClientMatch } from './netmatch.js';
 import { rtcSupported } from './rtc.js';
 import { el, $, $$, store, escapeHtml, isIOS, isLINE, isInApp, isStandalone, hasTouch, clamp, damp } from './util.js';
-import { toon, addOutline, disposeDeep } from './gfx.js';
+import { toon, addOutline, disposeDeep, setOutlineViewport, shadowTex } from './gfx.js';
+import { Post, GRADES } from './post.js';
+import { buildLobbyArt, LOBBY_GROUND } from './lobbyart.js';
 
 const MODE_KEYS = ['scramble', 'flag', 'ball'];
 
@@ -89,6 +91,9 @@ class App {
     this.dprMax = this.settings.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
     this.dpr = this.settings.quality === 'low' ? 1 : Math.min(this.dprMax, isIOS ? 2 : 1.75);
     R.setPixelRatio(this.dpr);
+    // 仕上げ（ブルーム・色の仕上げ）。「かるい」画質では使わない
+    this.post = new Post(R);
+    this.post.enabled = this.settings.quality !== 'low';
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
       this.contextLost = true;
@@ -112,11 +117,23 @@ class App {
     this.viewW = w;
     this.viewH = h;
     this.renderer.setSize(w, h, false);
+    this.syncViewport();
     if (this.match) this.match.resize(w, h);
     if (this.lobby) {
       this.lobby.cam.aspect = w / h;
       this.lobby.cam.updateProjectionMatrix();
     }
+  }
+  // 解像度が変わったら：仕上げの画面とふちどりの太さも合わせる
+  applyDpr() {
+    this.renderer.setPixelRatio(this.dpr);
+    this.renderer.setSize(this.viewW, this.viewH, false);
+    this.syncViewport();
+  }
+  syncViewport() {
+    const W = Math.round(this.viewW * this.dpr), H = Math.round(this.viewH * this.dpr);
+    setOutlineViewport(W, H, this.dpr);
+    if (this.post) this.post.setSize(this.viewW, this.viewH, this.dpr);
   }
   setLowGfx(on) {
     this.lowGfx = on;
@@ -187,7 +204,10 @@ class App {
       this.renderMatch();
     } else if (this.lobby) {
       this.updateLobby(dt);
-      if (!this.noRender) this.renderer.render(this.lobby.scene, this.lobby.cam);
+      if (!this.noRender) {
+        this.post.setGrade(GRADES.lobby);
+        this.post.render(this.lobby.scene, this.lobby.cam);
+      }
     }
   }
   // 試合を描く。カメラがキャラにくっついているとき（うしろが壁）はキャラを消して前が見えるように
@@ -196,7 +216,8 @@ class App {
     const P = m.player;
     const hide = !!(m.cam && m.cam.close && P && P.model && P.model.visible);
     if (hide) P.model.visible = false;
-    this.renderer.render(m.scene, m.camera);
+    this.post.setGrade(m.grade || GRADES.sakura);
+    this.post.render(m.scene, m.camera);
     if (hide) P.model.visible = true;
   }
   adaptQuality(dt) {
@@ -210,72 +231,57 @@ class App {
     F.length = 0;
     if (avg > 1 / 42 && this.dpr > 1) {
       this.dpr = Math.max(1, this.dpr - 0.25);
-      this.renderer.setPixelRatio(this.dpr);
-      this.renderer.setSize(this.viewW, this.viewH, false);
+      this.applyDpr();
+    } else if (avg > 1 / 36 && this.dpr <= 1 && this.post.bloomOn && this.match) {
+      // まだ重い：光のにじみをやめる → それでも重い：仕上げをやめる → ふちどりを消す
+      this.post.bloomOn = false;
+    } else if (avg > 1 / 34 && this.dpr <= 1 && this.post.enabled && !this.post.offNext && this.match) {
+      // 後処理をやめると全部のシェーダーが作り直しになる（試合中だと数秒止まる）ので、試合が終わってから切る
+      this.post.offNext = true;
     } else if (avg > 1 / 32 && this.dpr <= 1 && !this.lowGfx && this.match) {
       // それでも重い：キャラのふちどりを消して軽くする
       this.setLowGfx(true);
     } else if (avg < 1 / 58 && this.dpr < Math.min(this.dprMax, 2)) {
       this.dpr = Math.min(this.dprMax, this.dpr + 0.25);
-      this.renderer.setPixelRatio(this.dpr);
-      this.renderer.setSize(this.viewW, this.viewH, false);
+      this.applyDpr();
     }
   }
 
   // ===== ロビーの3D（キャラが立っている）=====
   initLobby() {
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0xcfe9ff, 60, 260);
     scene.add(new THREE.HemisphereLight(0xffffff, 0x9fb4cf, 1.6));
     const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
     sun.position.set(4, 8, 6);
     scene.add(sun);
     const cam = new THREE.PerspectiveCamera(35, this.viewW / this.viewH, 0.1, 2000);
-    // 空
-    const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(900, 32, 16),
-      new THREE.ShaderMaterial({
-        side: THREE.BackSide,
-        depthWrite: false,
-        fog: false,
-        vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }',
-        fragmentShader: 'varying vec3 vD; void main(){ float h = vD.y; vec3 c = mix(vec3(0.56,0.79,1.0), vec3(0.18,0.52,0.91), smoothstep(0.0,0.6,h)); c = mix(c, vec3(0.93,0.97,1.0), smoothstep(0.05,-0.3,h)); gl_FragColor = vec4(c,1.0); }',
-      })
-    );
-    scene.add(sky);
-    // 足場の島
+    // 空・雲海・雲・浮島（ステージと同じ描き方。lobbyart.js）
+    this.lobbyArt = buildLobbyArt(scene);
+    // 足もとの影（島の上）
     const isl = new THREE.Group();
-    const top = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.5, 0.5, 32), toon(0x86d35e));
-    top.position.y = -0.95;
-    addOutline(top, 0x2a3a20, 0.04);
-    isl.add(top);
-    const rock = new THREE.Mesh(new THREE.ConeGeometry(2.45, 3.4, 12, 2), toon(0x9a8676));
-    rock.rotation.x = Math.PI;
-    rock.position.y = -2.9;
-    isl.add(rock);
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.8), new THREE.MeshBasicMaterial({ map: shadowTex(), color: 0x1a1030, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+    sh.rotation.x = -Math.PI / 2;
+    sh.position.y = LOBBY_GROUND + 0.02;
+    sh.renderOrder = 1;
+    isl.add(sh);
     scene.add(isl);
-    // 遠くの島と雲
-    const far = new THREE.Group();
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * Math.PI * 2;
-      const r = 40 + (i % 3) * 25;
-      const m = new THREE.Mesh(new THREE.ConeGeometry(4 + (i % 3) * 2, 8, 8), toon(0x9a8676));
-      m.rotation.x = Math.PI;
-      m.position.set(Math.cos(a) * r, -6 + (i % 4) * 5, Math.sin(a) * r - 30);
-      far.add(m);
-      const g = new THREE.Mesh(new THREE.CylinderGeometry(4.2 + (i % 3) * 2, 4 + (i % 3) * 2, 1, 12), toon(0x86d35e));
-      g.position.copy(m.position);
-      g.position.y += 4.3;
-      far.add(g);
-    }
-    scene.add(far);
     // 舞う花びら
+    // 花びらの形（先が少し割れたしずく形）。ひらひらと回りながら落ちる
     const petals = [];
-    const pm = new THREE.MeshBasicMaterial({ color: 0xffc2da, side: THREE.DoubleSide });
+    const ps = new THREE.Shape();
+    ps.moveTo(0, -0.075);
+    ps.bezierCurveTo(0.058, -0.04, 0.062, 0.04, 0.024, 0.07);
+    ps.lineTo(0, 0.052);
+    ps.lineTo(-0.024, 0.07);
+    ps.bezierCurveTo(-0.062, 0.04, -0.058, -0.04, 0, -0.075);
+    const pg = new THREE.ShapeGeometry(ps, 5);
+    const pms = [0xffc6dc, 0xffadcb, 0xffe1ec].map((c) => new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
     for (let i = 0; i < 40; i++) {
-      const m = new THREE.Mesh(new THREE.CircleGeometry(0.06, 5), pm);
+      const m = new THREE.Mesh(pg, pms[i % 3]);
       m.position.set((Math.random() - 0.5) * 12, Math.random() * 8 - 2, (Math.random() - 0.5) * 8);
       m.userData.v = new THREE.Vector3(0.3 + Math.random() * 0.4, -0.25 - Math.random() * 0.3, 0.1);
+      m.userData.w = [0.8 + Math.random() * 1.4, Math.random() * 6.3, 1.5 + Math.random() * 1.5];
+      m.rotation.z = Math.random() * 6.3;
       scene.add(m);
       petals.push(m);
     }
@@ -289,10 +295,32 @@ class App {
       disposeDeep(L.model);
     }
     L.model = buildPuncher(PUNCHERS[id], team);
-    L.model.position.set(0, -0.12, 0);
+    L.model.position.set(0, 0.07, 0); // 足が島の上にのるように
     L.scene.add(L.model);
     L.charId = id;
     L.spin = Math.PI * 2;
+  }
+  // ロビーのキャラをタップしたか（画面の上での、頭から足までの範囲）
+  hitLobbyChar(x, y) {
+    const L = this.lobby;
+    if (!L || !L.model || !L.model.visible) return false;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const scr = (v) => {
+      v.applyMatrix4(L.model.matrixWorld).project(L.cam);
+      return [r.left + ((v.x + 1) / 2) * r.width, r.top + ((1 - v.y) / 2) * r.height];
+    };
+    const hd = scr(new THREE.Vector3(0, 1.0, 0));
+    const ft = scr(new THREE.Vector3(0, -0.95, 0));
+    const w = Math.abs(ft[1] - hd[1]) * 0.42;
+    return y > hd[1] - 16 && y < ft[1] + 12 && Math.abs(x - (hd[0] + ft[0]) / 2) < w;
+  }
+  // ロビーのキャラが身ぶりをする（キャラごとに好きな身ぶり）
+  lobbyEmote(name) {
+    const L = this.lobby;
+    if (!L || !L.model) return;
+    const pick = { tora: ['laugh', 'flex', 'wave', 'thumbs'], even: ['wave', 'thumbs', 'flex', 'point'], aomachi: ['point', 'thumbs', 'wave', 'bow'] }[L.charId] || ['wave'];
+    L.emote = name || pick[Math.floor(Math.random() * pick.length)];
+    L.emoteT = L.emoteDur = 1.6;
   }
   // ディスクの画面：モンスターが技を見せる（溜め→技→休む をくり返す）
   setLobbyMon(monId, discId) {
@@ -331,6 +359,7 @@ class App {
   updateLobby(dt) {
     const L = this.lobby;
     L.t += dt;
+    if (this.lobbyArt) this.lobbyArt.update(L.t);
     L.spin = damp(L.spin, 0, 6, dt);
     const disc = L.view === 'disc' && L.mon;
     if (L.model) L.model.visible = !disc;
@@ -389,7 +418,15 @@ class App {
     }
     if (L.model) {
       L.model.rotation.y = 0.35 + Math.sin(L.t * 0.4) * 0.15 + L.spin;
-      poseModel(L.model, { mode: L.pose, t: L.t, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.3, runPhase: 0 }, dt);
+      // ホームでは、ときどき身ぶり（エモート）をする。タップしても反応する
+      if (L.emoteT > 0) L.emoteT -= dt;
+      L.nextEmote = (L.nextEmote == null ? 4 : L.nextEmote) - dt;
+      if (L.nextEmote <= 0 && (L.view === 'home' || L.view === 'chars') && !L.forceMode) {
+        L.nextEmote = 7 + Math.random() * 6;
+        this.lobbyEmote();
+      }
+      const em = L.emoteT > 0 ? L.emote : null;
+      poseModel(L.model, { mode: L.forceMode || L.pose, t: L.t, speed01: 0, turn: 0, punchSide: 1, punchPhase: L.forceMode === 'punch' ? 0.3 : 0.3, runPhase: 0, emote: em, emoteT: L.emoteT, emoteDur: L.emoteDur }, dt);
     }
     // 画面の向きでキャラの位置を変える（縦：左下、横：左）
     const portrait = this.viewH > this.viewW;
@@ -398,15 +435,21 @@ class App {
     let ox = portrait ? 0.62 : 1.7;
     let ly = portrait ? 0.95 : 0.3;
     if (L.view === 'chars') {
-      // キャラ選び：上の方にまん中で大きめ
-      dist = portrait ? 6.2 : 5.5;
+      // キャラ選び：カードと説明のあいだに、頭から足まで
+      dist = portrait ? 9.2 : 5.5;
       ox = portrait ? 0 : 1.2;
-      ly = portrait ? -0.75 : 0.2;
+      ly = portrait ? -0.5 : 0.2;
     } else if (L.view === 'disc') {
       // ディスク：上の窓にモンスター
       dist = portrait ? 9.5 + (0.5 - Math.min(0.5, asp)) * 8 : 12;
       ox = 0;
       ly = portrait ? -1.6 : -2.1;
+    }
+    if (L.debugCam) {
+      // 見た目の点検用（テストのスクリプトから）
+      dist = L.debugCam.dist;
+      ox = L.debugCam.ox;
+      ly = L.debugCam.ly;
     }
     L.cx = damp(L.cx == null ? ox : L.cx, ox, 5, dt);
     L.cd = damp(L.cd == null ? dist : L.cd, dist, 5, dt);
@@ -414,9 +457,11 @@ class App {
     L.cam.position.set(L.cx + 0.25, 0.85 + Math.sin(L.t * 0.5) * 0.05, L.cd);
     L.cam.lookAt(L.cx, L.cy, 0);
     for (const p of L.petals) {
+      const w = p.userData.w;
       p.position.addScaledVector(p.userData.v, dt);
-      p.rotation.x += dt * 2;
-      p.rotation.y += dt * 1.3;
+      p.rotation.z += dt * w[0];
+      p.rotation.x = 0.75 * Math.sin(L.t * w[2] + w[1]); // ひらひら（真横にはなりにくい）
+      p.rotation.y = 0.5 * Math.cos(L.t * w[2] * 0.7 + w[1]);
       if (p.position.y < -3) p.position.set(-6 - Math.random() * 3, 5 + Math.random() * 2, (Math.random() - 0.5) * 8);
     }
   }
@@ -454,14 +499,17 @@ class App {
     f.style.opacity = '0';
   }
   cutin(p) {
-    const T = TEAM[p.team];
-    const c = el('div', 'cutin');
-    const c1 = p.team === 0 ? '#1d6ad6' : '#d61d45';
-    const c2 = p.team === 0 ? '#7fd0ff' : '#ff9fb6';
-    c.style.setProperty('--c1', c1);
-    c.style.setProperty('--c2', c2);
-    c.innerHTML = `<div class="band"></div><img alt=""><div class="who">${escapeHtml(p.isPlayer ? 'あなた' : p.displayName || p.def.short || p.def.name)}・スペシャル</div><div class="nm">${escapeHtml(p.def.special.name)}</div>`;
-    c.querySelector('img').src = this.portraits.full(p.def.id, p.team, 'special');
+    // 味方は右から、敵は左から（向きもかえる）
+    const me = this.match && this.match.player;
+    const foe = !!(me && p.team !== me.team);
+    const c = el('div', 'spcut' + (foe ? ' foe' : ''));
+    const pal = p.team === 0 ? ['#06173f', '#1d62d0', '#6fc8ff', '#dff4ff'] : ['#3f0614', '#d01d45', '#ff8aa6', '#ffe3ea'];
+    pal.forEach((v, i) => c.style.setProperty('--c' + i, v));
+    const who = p.isPlayer ? 'あなた' : p.displayName || p.def.short || p.def.name;
+    const name = [...p.def.special.name];
+    const chars = name.map((ch, i) => `<i style="--i:${i}">${escapeHtml(ch)}</i>`).join('');
+    c.innerHTML = `<div class="dim"></div><div class="rays"></div><div class="panel"><div class="pin"><div class="bg"></div><div class="dots"></div><div class="glow"></div><img alt=""><div class="streaks"></div><div class="glint"></div></div></div><div class="txt"><div class="who"><b>SPECIAL</b>${escapeHtml(who)}</div><div class="nm${name.length > 6 ? ' long' : ''}">${chars}</div></div><div class="flash"></div>`;
+    c.querySelector('img').src = this.portraits.cut(p.def.id, p.team, foe ? -1 : 1);
     this.fxLayer.appendChild(c);
     setTimeout(() => c.remove(), 1300);
   }
@@ -646,6 +694,14 @@ class App {
     };
     $('.help', s).onclick = () => this.showHowto();
     $('.share', s).onclick = () => this.share();
+    // キャラをタップすると身ぶり（エモート）で応える
+    s.addEventListener('click', (e) => {
+      if (e.target.closest('button, .modecard, .topbar, .tabs')) return;
+      if (!this.hitLobbyChar(e.clientX, e.clientY)) return;
+      this.lobbyEmote();
+      this.lobby.nextEmote = 9;
+      sound.play('ui');
+    });
     if ($('.a2hs', s)) $('.a2hs', s).onclick = () => this.showA2HS();
     // はじめての人には一度だけ「アプリにする」をすすめる
     if (isIOS && !isStandalone() && !isInApp && S.plays >= 1 && !store.get('rpf_a2hs_shown', false)) {
@@ -1244,8 +1300,9 @@ class App {
       showQ();
       this.dprMax = st.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
       this.dpr = st.quality === 'high' ? this.dprMax : st.quality === 'low' ? 1 : Math.min(this.dprMax, 1.5);
-      this.renderer.setPixelRatio(this.dpr);
-      this.renderer.setSize(this.viewW, this.viewH, false);
+      this.post.enabled = st.quality !== 'low';
+      this.post.bloomOn = true;
+      this.applyDpr();
     }));
     $('.tutbtn', s).onclick = () => this.startTutorial();
     $('.how', s).onclick = () => this.showHowto();
@@ -1333,6 +1390,7 @@ class App {
   // ===== 試合 =====
   startMatch() {
     const S = this.save;
+    if (this.settings.quality === 'auto' && this.post.enabled) this.post.bloomOn = true;
     this.screenEl.innerHTML = '';
     this.paused = false;
     const deck = S.decks[S.char];
@@ -1356,6 +1414,11 @@ class App {
     this.match.resize(this.viewW, this.viewH);
   }
   endMatch() {
+    clearTimeout(this._resBgm);
+    if (this.post.offNext) {
+      this.post.enabled = false;
+      this.post.offNext = false;
+    }
     if (this.speedLines) this.speedLines.style.opacity = '0';
     this._slv = '0';
     this._slo = 0;
@@ -1433,7 +1496,10 @@ class App {
     this.speedLines.style.opacity = '0';
     sound.stopBgm();
     sound.play(r.win > 0 ? 'win' : r.win < 0 ? 'lose' : 'ui');
-    setTimeout(() => sound.playBgm('result'), 1500);
+    clearTimeout(this._resBgm);
+    this._resBgm = setTimeout(() => {
+      if (this.match && this.match.phase === 'result') sound.playBgm('result');
+    }, 1500);
     const wl = r.win > 0 ? ['WIN!', 'win'] : r.win < 0 ? ['LOSE…', 'lose'] : ['DRAW', 'draw'];
     const rows = r.punchers
       .slice()
@@ -1463,6 +1529,14 @@ class App {
        <div class="row resbtns" style="width:100%;max-width:420px;gap:10px"><button class="btn k home" style="flex:1">${r.online ? '部屋を出る' : 'ホーム'}</button><button class="btn y again" style="flex:1.4">${r.online ? '部屋にもどる' : 'もう1回'}</button></div>`,
       'result scroll'
     );
+    // 自分のキャラの勝ち・負けポーズ（タイトルのうしろ）
+    if (r.me && r.me.def) {
+      const hero = el('div', `hero t${r.me.team} ${wl[1]}`);
+      hero.innerHTML = '<img alt="">';
+      hero.querySelector('img').src = this.portraits.hero(r.me.def.id, r.me.team, r.win > 0 ? 'win' : r.win < 0 ? 'lose' : 'hover');
+      s.prepend(hero);
+      s.classList.add('hashero');
+    }
     if (rw.prizes.length) setTimeout(() => sound.play('capsule'), 700);
     $('.home', s).onclick = () => {
       sound.play('ui');

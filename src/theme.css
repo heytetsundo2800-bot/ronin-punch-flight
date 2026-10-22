@@ -999,6 +999,7 @@ button {
   position: absolute;
   left: 2px;
   bottom: 4px;
+  z-index: 2; /* 下の一覧の上の、暗くなるグラデーションより手前に */
 }
 .dsinfo .rr {
   display: inline-block;
@@ -1820,27 +1821,6 @@ button {
   text-shadow: 0 4px 0 #04060d, 0 0 30px rgba(255, 61, 98, 0.7);
 }
 
-/* スペシャルのカットイン */
-.cutin .band {
-  box-shadow: 0 0 0 4px #04060d, 0 0 0 5px rgba(86, 214, 255, 0.5);
-  background:
-    repeating-linear-gradient(0deg, rgba(4, 6, 13, 0.12) 0 2px, transparent 2px 5px),
-    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.5) 0 2px, rgba(255, 255, 255, 0) 2px 30px),
-    linear-gradient(90deg, var(--c1), var(--c2));
-}
-.cutin .nm {
-  font-family: var(--font);
-  -webkit-text-stroke: 0;
-  letter-spacing: 0.02em;
-  text-shadow: 0 3px 0 #04060d, 0 0 20px rgba(4, 6, 13, 0.6);
-}
-.cutin .who {
-  background: #04060d;
-  font-family: var(--fd);
-  letter-spacing: 0.12em;
-  box-shadow: inset 3px 0 0 var(--y);
-}
-
 /* 頭の上の名前 */
 .ntag .nm {
   font-family: var(--font);
@@ -1910,4 +1890,371 @@ button {
 .room .ropts .rule button .ico {
   width: 16px;
   height: 16px;
+}
+
+/* ===== スペシャルのカットイン =====
+   #コンパスのヒーロースキル・バウンティラッシュの必殺技の見せ方を参考に：
+   画面を暗く → 白く光る → 集中線 → 斜めの帯がひらく → 決めポーズの絵がズームで入る → 技名が1文字ずつスタンプ → 帯ごと横へ抜ける
+   （1.3秒。動かすのは transform と opacity だけ＝スマホでも軽い） */
+.spcut {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  --sk: -9deg;
+  --dir: 1;
+}
+.spcut.foe {
+  --sk: 9deg;
+  --dir: -1;
+}
+.spcut .dim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 44%, rgba(4, 6, 13, 0.2), rgba(4, 6, 13, 0.74) 75%);
+  animation: sc-dim 1.3s linear forwards;
+}
+/* 集中線：画面より少しだけ大きい板（大きすぎる板はスマホのメモリを食うので） */
+.spcut .rays {
+  position: absolute;
+  inset: -5%;
+  background:
+    repeating-conic-gradient(from 0deg at 50% 44%, rgba(255, 255, 255, 0) 0deg 2.7deg, rgba(255, 255, 255, 0.62) 2.7deg 3.05deg, rgba(255, 255, 255, 0) 3.05deg 5.9deg, rgba(255, 255, 255, 0.3) 5.9deg 6.1deg),
+    repeating-conic-gradient(from 1.3deg at 50% 44%, rgba(255, 255, 255, 0) 0deg 7.3deg, rgba(255, 255, 255, 0.4) 7.3deg 7.6deg);
+  -webkit-mask-image: radial-gradient(circle at 50% 44%, transparent 0 12vmax, #000 34vmax);
+  mask-image: radial-gradient(circle at 50% 44%, transparent 0 12vmax, #000 34vmax);
+  transform-origin: 50% 44%;
+  animation: sc-rays 1.3s linear forwards, sc-jit 0.1s steps(2) infinite;
+}
+/* 斜めの帯：外がわで斜めにして、内がわで縦にひらく（斜めの角度は変わらない） */
+.spcut .panel {
+  position: absolute;
+  left: -14%;
+  right: -14%;
+  top: 24%;
+  height: 37%;
+  transform: skewY(var(--sk));
+}
+.spcut .pin {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  box-shadow: 0 0 0 3px var(--c3), 0 0 0 8px var(--ink), 0 0 46px 10px var(--c1);
+  animation: sc-panel 1.3s cubic-bezier(0.2, 0.9, 0.25, 1) forwards;
+}
+.spcut .bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(calc(90deg + 10deg * var(--dir)), var(--c0) 0%, var(--c1) 40%, var(--c2) 100%);
+}
+.spcut .dots {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0 1.5px, transparent 1.9px) 0 0 / 9px 9px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 15%, #000 70%);
+  mask-image: linear-gradient(90deg, transparent 15%, #000 70%);
+}
+.spcut.foe .dots {
+  -webkit-mask-image: linear-gradient(270deg, transparent 15%, #000 70%);
+  mask-image: linear-gradient(270deg, transparent 15%, #000 70%);
+}
+.spcut .glow {
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  right: 4%;
+  width: 62%;
+  background: radial-gradient(closest-side, var(--c3), rgba(255, 255, 255, 0));
+  opacity: 0.6;
+}
+.spcut.foe .glow {
+  right: auto;
+  left: 4%;
+}
+.spcut .pin img {
+  position: absolute;
+  bottom: -15%;
+  right: -2%;
+  height: 122%;
+  transform: skewY(calc(var(--sk) * -1));
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 0 3px var(--c3)) drop-shadow(0 8px 0 rgba(4, 6, 13, 0.45));
+  will-change: transform;
+  animation: sc-img 1.3s cubic-bezier(0.15, 0.9, 0.3, 1) forwards;
+}
+.spcut.foe .pin img {
+  right: auto;
+  left: -2%;
+  animation-name: sc-img-foe;
+}
+/* 手前を流れる速さの線 */
+.spcut .streaks {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 240%;
+  background:
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85), transparent) 4% 12% / 26% 2px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent) 30% 27% / 18% 2px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent) 52% 44% / 30% 3px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent) 12% 61% / 22% 2px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent) 70% 72% / 24% 2px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent) 38% 86% / 20% 2px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent) 86% 20% / 16% 2px no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent) 92% 55% / 18% 2px no-repeat;
+  animation: sc-streak 1.3s linear forwards;
+}
+.spcut.foe .streaks {
+  animation-name: sc-streak-foe;
+}
+/* 帯を一度だけ横切る光 */
+.spcut .glint {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 16%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  transform: skewX(-22deg);
+  animation: sc-glint 1.3s ease-out forwards;
+}
+.spcut .txt {
+  position: absolute;
+  left: 5%;
+  top: 46%;
+  rotate: var(--sk);
+  transform-origin: 0 50%;
+  animation: sc-txt 1.3s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+.spcut.foe .txt {
+  left: auto;
+  right: 5%;
+  text-align: right;
+  transform-origin: 100% 50%;
+  animation-name: sc-txt-foe;
+}
+.spcut .who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px 3px 4px;
+  background: var(--ink);
+  color: #fff;
+  font-family: var(--fd);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  transform: skewX(-14deg);
+  box-shadow: 4px 4px 0 var(--c1);
+}
+.spcut .who b {
+  padding: 1px 7px;
+  background: var(--y);
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+.spcut .nm {
+  margin-top: 6px;
+  white-space: nowrap;
+  font-family: var(--font);
+  font-size: 44px;
+  font-weight: 900;
+  line-height: 1.05;
+  color: #fff;
+}
+.spcut .nm.long {
+  font-size: 34px;
+}
+.spcut .nm i {
+  display: inline-block;
+  font-style: italic;
+  text-shadow:
+    3px 0 0 var(--ink), -3px 0 0 var(--ink), 0 3px 0 var(--ink), 0 -3px 0 var(--ink),
+    2px 2px 0 var(--ink), -2px -2px 0 var(--ink), 2px -2px 0 var(--ink), -2px 2px 0 var(--ink),
+    5px 6px 0 var(--c1), 0 0 26px var(--c3);
+  animation: sc-ch 0.3s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+  animation-delay: calc(110ms + var(--i) * 34ms);
+}
+.spcut .flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 44%, #fff 0%, rgba(255, 255, 255, 0.85) 45%, var(--c3) 100%);
+  animation: sc-flash 0.34s ease-out forwards;
+}
+@keyframes sc-dim {
+  0% { opacity: 0; }
+  7% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes sc-rays {
+  0% { opacity: 0; scale: 1.25; }
+  6% { opacity: 1; }
+  80% { opacity: 0.85; scale: 1.02; }
+  100% { opacity: 0; scale: 1; }
+}
+@keyframes sc-jit {
+  0% { rotate: 0deg; }
+  100% { rotate: 1.2deg; }
+}
+@keyframes sc-panel {
+  0% { scale: 1 0; translate: 0 0; opacity: 1; }
+  9% { scale: 1 1.14; }
+  15% { scale: 1 1; }
+  80% { scale: 1 1; translate: 0 0; opacity: 1; }
+  100% { scale: 1 0.06; translate: calc(-22% * var(--dir)) 0; opacity: 0; }
+}
+@keyframes sc-img {
+  0% { translate: 30% 8%; scale: 1.3; opacity: 0; }
+  8% { opacity: 1; }
+  24% { translate: 0 0; scale: 1; }
+  80% { translate: -4% 0; scale: 1.05; opacity: 1; }
+  100% { translate: -16% 0; scale: 1.06; opacity: 0; }
+}
+@keyframes sc-img-foe {
+  0% { translate: -30% 8%; scale: 1.3; opacity: 0; }
+  8% { opacity: 1; }
+  24% { translate: 0 0; scale: 1; }
+  80% { translate: 4% 0; scale: 1.05; opacity: 1; }
+  100% { translate: 16% 0; scale: 1.06; opacity: 0; }
+}
+@keyframes sc-streak {
+  0% { translate: 8% 0; }
+  100% { translate: -58% 0; }
+}
+@keyframes sc-streak-foe {
+  0% { translate: -66% 0; }
+  100% { translate: 0 0; }
+}
+@keyframes sc-glint {
+  0%, 12% { translate: -150% 0; }
+  45%, 100% { translate: 800% 0; }
+}
+@keyframes sc-txt {
+  0% { translate: -40% 0; opacity: 0; }
+  10% { translate: 0 0; opacity: 1; }
+  82% { translate: 3% 0; opacity: 1; }
+  100% { translate: -30% 0; opacity: 0; }
+}
+@keyframes sc-txt-foe {
+  0% { translate: 40% 0; opacity: 0; }
+  10% { translate: 0 0; opacity: 1; }
+  82% { translate: -3% 0; opacity: 1; }
+  100% { translate: 30% 0; opacity: 0; }
+}
+@keyframes sc-ch {
+  0% { opacity: 0; scale: 2.6; translate: 0 -10%; }
+  100% { opacity: 1; scale: 1; translate: 0 0; }
+}
+@keyframes sc-flash {
+  0% { opacity: 0.92; }
+  100% { opacity: 0; }
+}
+
+/* ===== 結果：自分のキャラの勝ち・負けポーズ（結果画面でもキャラが主役。バウンティラッシュ・#コンパスと同じ考え） ===== */
+.result > * {
+  position: relative;
+  z-index: 1;
+}
+.result > .hero {
+  position: absolute;
+  z-index: 0;
+  top: calc(var(--sat) - 10px);
+  right: -22px;
+  width: 62%;
+  max-width: 280px;
+  height: clamp(190px, 35vh, 330px);
+  pointer-events: none;
+  --hc: rgba(47, 143, 255, 0.5);
+  animation: hero-in 0.7s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.result > .hero.t1 {
+  --hc: rgba(255, 61, 98, 0.45);
+}
+.result > .hero::before {
+  content: '';
+  position: absolute;
+  inset: 4% 2% 14% 6%;
+  background: radial-gradient(closest-side, var(--hc), rgba(0, 0, 0, 0));
+}
+.result > .hero.lose {
+  filter: saturate(0.7) brightness(0.82);
+}
+.result > .hero img {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+  mask-image: linear-gradient(180deg, #000 70%, transparent);
+}
+@keyframes hero-in {
+  from {
+    opacity: 0;
+    translate: 40px 0;
+  }
+}
+.result.hashero .wl,
+.result.hashero .sc,
+.result.hashero .reason {
+  align-self: flex-start;
+  margin-left: 3%;
+}
+.result.hashero .reason {
+  margin-left: 6%;
+}
+/* 絵の上に重なっても数字が読めるように、表の行に暗い下地 */
+.result.hashero .tr:not(.th):not(.me) {
+  background: rgba(4, 6, 13, 0.55);
+}
+.result.hashero .tr {
+  margin-bottom: 1px;
+}
+
+/* 横長の画面（スマホ横・PC）：帯を太く、絵を画面の中に（帯は画面より広いので、端に合わせると外に出てしまう） */
+@media (min-aspect-ratio: 1/1) {
+  .spcut .panel {
+    top: 17%;
+    height: 56%;
+  }
+  .spcut .pin img {
+    right: 15%;
+    bottom: -12%;
+    height: 118%;
+  }
+  .spcut.foe .pin img {
+    right: auto;
+    left: 15%;
+  }
+  .spcut .glow {
+    right: 14%;
+    width: 40%;
+  }
+  .spcut.foe .glow {
+    right: auto;
+    left: 14%;
+  }
+  .spcut .txt {
+    top: 50%;
+    left: 6%;
+  }
+  .spcut.foe .txt {
+    left: auto;
+    right: 6%;
+  }
+  .spcut .nm {
+    font-size: 50px;
+  }
+}
+
+/* 「フレンドとオンライン対戦」がせまい画面で2行に割れないように */
+.onlinebtn b {
+  white-space: nowrap;
+}
+@media (max-width: 389px) {
+  .onlinebtn b {
+    font-size: 13px;
+    letter-spacing: 0;
+  }
 }

@@ -93,7 +93,7 @@ export class World {
   }
 
   // 光線：最初に当たる距離（なければ Infinity）
-  raycast(o, d, maxDist) {
+  raycast(o, d, maxDist, skipKind = null) {
     let best = maxDist;
     // 調べる範囲：光線が通るマス（ざっくり：はじめと終わりを含む範囲）
     const ex = o.x + d.x * maxDist, ez = o.z + d.z * maxDist;
@@ -114,6 +114,7 @@ export class World {
         }
       }
     for (const c of list) {
+      if (skipKind && c.kind === skipKind) continue;
       const t = rayHit(c, o, d, best);
       if (t < best) best = t;
     }
@@ -125,8 +126,8 @@ export class World {
   }
 
   // 下にある床の高さ（影を置く場所）
-  groundBelow(p, maxDown = 80) {
-    const t = this.raycast(p, _down, maxDown);
+  groundBelow(p, maxDown = 80, skipKind = null) {
+    const t = this.raycast(p, _down, maxDown, skipKind);
     return t === Infinity || t >= maxDown ? null : p.y - t;
   }
 }

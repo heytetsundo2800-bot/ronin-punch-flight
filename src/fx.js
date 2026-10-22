@@ -1,15 +1,41 @@
 // えフェクト：火花・数字・波紋・光の筋・つぶ
+// アニメ調の光（ヒットの星・衝撃の輪・破片）・擬音の文字・セル塗りのけむり・ジェットの光の帯は vfx.js でまとめ描き
 import * as THREE from 'three';
 import { glowTex, toon, addOutline, canvasTex, sakuraTex, shareMark, disposeDeep } from './gfx.js';
 import { TEAM, ELEM } from './config.js';
 import { KIND_COLOR, OMAMORI } from './characters.js';
 import { buildMonster, poseMonster, summonSpot, monsterMouth, SUMMON_TURN, SUMMON_SCALE } from './monsters.js';
 import { rand, clamp, el } from './util.js';
+import { VFX, CELL, WORD } from './vfx.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const _d = new THREE.Vector3();
+const _c0 = new THREE.Vector3();
+const _p = new THREE.Vector3();
+const _w = new THREE.Vector3();
+const _ca = new THREE.Color();
+const _cb = new THREE.Color();
+// d の向き（sign で逆向き）のまわりに少しばらつく向き
+function randDirLocal(out, d, sign, spread) {
+  out.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(spread).addScaledVector(d, sign);
+  if (out.lengthSq() < 1e-4) out.set(0, 1, 0);
+  return out.normalize();
+}
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+// 属性の差し色（火：だいだい、風：みどり、水：水色）
+const ACCENT = { fire: 0xff6a1a, wind: 0x4dff7a, water: 0x2fc8ff };
+// ジェットの光の帯の色（根元は明るいチームの色＋白い芯、うしろは濃いチームの色）。青＝水色がかった青、赤＝ピンクがかった赤
+const JET = {
+  0: { head: new THREE.Color(0x2aaeff).multiplyScalar(2.0), tail: new THREE.Color(0x1064ff).multiplyScalar(1.6), glow: 0x8fdcff },
+  1: { head: new THREE.Color(0xff3c74).multiplyScalar(2.0), tail: new THREE.Color(0xff1040).multiplyScalar(1.6), glow: 0xff8aa8 },
+};
+// 強い当たりの擬音
+const HIT_WORDS = [WORD.DOGO, WORD.BAKI, WORD.DOKA, WORD.BASHI];
+const DARK = new THREE.Color(0x2a2238);
+const GRAY = new THREE.Color(0xd9dbe4);
+const WARM = new THREE.Color(0xffd77a);
 const easeOutBack = (k) => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
 // 技を出してから消えるまで（種類ごと）
 const ACT_DUR = { ATK: 0.75, HEAL: 0.9, BUFF: 0.9, TRAP: 0.8, WARP: 0.65, MOVE: 0.7 };
@@ -44,7 +70,7 @@ class Particles {
       vertexShader:
         'attribute float size; attribute float alpha; attribute vec3 color; varying vec3 vC; varying float vA;\n' +
         'uniform float scale; void main(){ vC = color; vA = alpha; vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = size * scale / max(0.5, -mv.z); gl_Position = projectionMatrix * mv; }',
-      fragmentShader: 'uniform sampler2D map; varying vec3 vC; varying float vA; void main(){ vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vC, t.a * vA); }',
+      fragmentShader: 'uniform sampler2D map; varying vec3 vC; varying float vA; void main(){ vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vC * 1.6, t.a * vA);\n#include <colorspace_fragment>\n}',
     });
     this.points = new THREE.Points(g, this.mat);
     this.points.frustumCulled = false;
@@ -115,87 +141,6 @@ class Particles {
   }
 }
 const _col = new THREE.Color();
-
-// ===== 光の筋（足もとから）=====
-class Trail {
-  constructor(scene, color, n = 22) {
-    this.n = n;
-    this.pts = [];
-    for (let i = 0; i < n; i++) this.pts.push(new THREE.Vector3());
-    this.count = 0;
-    const g = new THREE.BufferGeometry();
-    this.pos = new Float32Array(n * 2 * 3);
-    this.al = new Float32Array(n * 2);
-    const idx = [];
-    for (let i = 0; i < n - 1; i++) {
-      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
-      idx.push(a, b, c, b, d, c);
-    }
-    g.setIndex(idx);
-    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
-    g.setAttribute('alpha', new THREE.BufferAttribute(this.al, 1).setUsage(THREE.DynamicDrawUsage));
-    this.mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      uniforms: { color: { value: new THREE.Color(color) } },
-      vertexShader: 'attribute float alpha; varying float vA; void main(){ vA = alpha; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: 'uniform vec3 color; varying float vA; void main(){ gl_FragColor = vec4(color + vec3(0.25), vA); }',
-    });
-    this.mesh = new THREE.Mesh(g, this.mat);
-    this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 4;
-    scene.add(this.mesh);
-    this.width = 0.55;
-    this.fade = 0;
-  }
-  setColor(c) {
-    this.mat.uniforms.color.value.set(c);
-  }
-  update(head, on, camPos, dt, width = 0.55) {
-    // 点を後ろへずらす
-    const P = this.pts;
-    if (on || this.fade > 0) {
-      for (let i = this.n - 1; i > 0; i--) P[i].copy(P[i - 1]);
-      P[0].copy(head);
-      if (this.count < this.n) this.count++;
-    }
-    this.fade = on ? 1 : Math.max(0, this.fade - dt * 3);
-    if (!on && this.fade <= 0) {
-      this.count = 0;
-      this.mesh.visible = false;
-      return;
-    }
-    this.mesh.visible = true;
-    for (let i = 0; i < this.n; i++) {
-      const a = P[i], b = P[Math.min(i + 1, this.count - 1)] || a;
-      _v.subVectors(a, b);
-      if (_v.lengthSq() < 1e-6) _v.set(0, 0, 1);
-      _v2.subVectors(camPos, a);
-      _v.cross(_v2).normalize();
-      const k = i < this.count ? 1 - i / this.n : 0;
-      const w = width * k;
-      const i6 = i * 6;
-      this.pos[i6] = a.x + _v.x * w;
-      this.pos[i6 + 1] = a.y + _v.y * w;
-      this.pos[i6 + 2] = a.z + _v.z * w;
-      this.pos[i6 + 3] = a.x - _v.x * w;
-      this.pos[i6 + 4] = a.y - _v.y * w;
-      this.pos[i6 + 5] = a.z - _v.z * w;
-      const al = k * k * 0.85 * this.fade;
-      this.al[i * 2] = al;
-      this.al[i * 2 + 1] = al;
-    }
-    this.mesh.geometry.attributes.position.needsUpdate = true;
-    this.mesh.geometry.attributes.alpha.needsUpdate = true;
-  }
-  dispose(scene) {
-    scene.remove(this.mesh);
-    this.mesh.geometry.dispose();
-    this.mat.dispose();
-  }
-}
 
 // ===== 波紋の輪 =====
 const ringGeo = shareMark(new THREE.RingGeometry(0.85, 1, 48));
@@ -313,8 +258,7 @@ export class FX {
     this.scene = match.scene;
     this.layer = layer; // 数字を出す DOM
     this.parts = new Particles(this.scene);
-    this.trails = new Map();
-    this.rings = [];
+    this.rings = []; // 昔の波紋（いまは vfx でまとめ描き）
     this.nums = [];
     this.labels = [];
     this.auras = new Map();
@@ -325,6 +269,9 @@ export class FX {
     this.beams = [];
     this.projMeshes = new Set();
     this.time = 0;
+    // アニメ調のえフェクト（光の帯・ヒット・擬音・けむり）。まとめ描きで4回だけ
+    this.vfx = new VFX(this.scene, { low: !!(match.app && match.app.lowGfx) });
+    this.jets = new Map(); // 人ごと：ジェットの帯・着地の見はり
   }
 
   // ===== 毎フレーム =====
@@ -343,21 +290,12 @@ export class FX {
       const c = m.userData.trail;
       if (c && m.visible && Math.random() < dt * 45) this.parts.emit(m.position.x + rand(-0.2, 0.2), m.position.y + rand(-0.2, 0.2), m.position.z + rand(-0.2, 0.2), rand(-1, 1), rand(-1, 1), rand(-1, 1), 0.38, 1.1, 0.1, c, 2);
     }
-    // 足もとの光
+    // 足のジェットの光の帯（キックフライト風）と、強い着地のけむり
+    const V = this.vfx;
+    V.low = !!(this.match.app && this.match.app.lowGfx);
+    let slot = 0;
     for (const p of this.match.punchers) {
-      let tr = this.trails.get(p);
-      if (!tr) {
-        tr = [new Trail(this.scene, TEAM[p.team].light), new Trail(this.scene, TEAM[p.team].light)];
-        this.trails.set(p, tr);
-      }
-      const on = p.alive && p.model.visible && (p.state === 'dash' || p.state === 'cruise' || p.state === 'roll' || (p.state === 'fly' && p.vel.length() > 6) || p.state === 'skill');
-      const w = p.state === 'dash' || p.state === 'skill' ? 0.75 : 0.42;
-      for (let i = 0; i < 2; i++) {
-        const leg = p.model.userData.parts.legs[i];
-        leg.knee.getWorldPosition(_v);
-        _v.addScaledVector(p.forward, -0.35);
-        tr[i].update(_v, on, this.camPos, dt, w * (p.buffs.big > 0 ? 2 : 1));
-      }
+      this.jetStep(p, slot++, dt);
       // スペシャルがたまった人は白いオーラ
       if (p.alive && p.sp >= 1 && Math.random() < dt * 30) {
         this.parts.emit(p.pos.x + rand(-0.6, 0.6), p.pos.y + rand(-0.9, 0.9), p.pos.z + rand(-0.6, 0.6), 0, rand(1, 2.5), 0, 0.5, 0.9, 0.2, 0xffffff, 2);
@@ -371,21 +309,8 @@ export class FX {
         this.parts.emit(p.pos.x + Math.cos(a) * 1.5, p.pos.y - 0.6, p.pos.z + Math.sin(a) * 1.5, -Math.cos(a) * 2, 3, -Math.sin(a) * 2, 0.45, 0.7, 0.1, c, 1);
       }
     }
-    // 輪
-    for (let i = this.rings.length - 1; i >= 0; i--) {
-      const r = this.rings[i];
-      r.t += dt;
-      const k = r.t / r.life;
-      const s = r.r0 + (r.r1 - r.r0) * (1 - Math.pow(1 - k, 2));
-      r.mesh.scale.setScalar(s);
-      r.mesh.material.opacity = (1 - k) * r.op;
-      if (r.face) r.mesh.lookAt(this.camPos);
-      if (k >= 1) {
-        this.scene.remove(r.mesh);
-        r.mesh.material.dispose();
-        this.rings.splice(i, 1);
-      }
-    }
+    // 光・けむり・擬音・帯をまとめて動かして書きこむ（波紋の輪もここ）
+    V.update(dt, cam, this.time);
     // 数字・ことば（画面の位置を毎フレーム計算）
     const W = this.match.viewW, H = this.match.viewH;
     for (let i = this.nums.length - 1; i >= 0; i--) {
@@ -418,13 +343,130 @@ export class FX {
     this.nums.push({ el: e, pos: pos.clone(), t: 0, life, rise, dx: rand(-14, 14) });
   }
 
+  // ===== ジェットの光の帯（足ごとに1本）=====
+  jetStep(p, slot, dt) {
+    const V = this.vfx;
+    let J = this.jets.get(p);
+    if (!J) {
+      J = { px: p.pos.x, py: p.pos.y, pz: p.pos.z, spd: 0, vy: 0, ground: !!p.ground, landT: 0, st: p.state };
+      this.jets.set(p, J);
+    }
+    // 速さは位置の変化から（オンラインのほかの人の画面でも同じように出る）
+    if (dt > 1e-4) {
+      const dx = p.pos.x - J.px, dy = p.pos.y - J.py, dz = p.pos.z - J.pz;
+      const sp = Math.sqrt(dx * dx + dy * dy + dz * dz) / dt;
+      if (sp < 140) {
+        J.spd += (sp - J.spd) * Math.min(1, dt * 12);
+        J.vy += (dy / dt - J.vy) * Math.min(1, dt * 16);
+      }
+    }
+    J.px = p.pos.x;
+    J.py = p.pos.y;
+    J.pz = p.pos.z;
+    if (slot >= 8) return;
+    const st = p.state;
+    const speed = Math.max(J.spd, p.vel ? p.vel.length() : 0);
+    const air = !p.ground || st === 'dash' || st === 'skill' || st === 'roll';
+    const on = p.alive && air && (st === 'dash' || st === 'roll' || st === 'skill' || ((st === 'cruise' || st === 'fly') && speed > 5));
+    const big = p.buffs && p.buffs.big > 0 ? 2.2 : 1;
+    const w = (st === 'dash' || st === 'skill' ? 0.5 : st === 'roll' ? 0.44 : 0.38) * big;
+    const pal = JET[p.team] || JET[0];
+    const me = p === this.match.player;
+    const legs = p.model && p.model.userData.parts && p.model.userData.parts.legs;
+    const near = p.pos.distanceToSquared(this.camPos) < 3600;
+    for (let i = 0; i < 2; i++) {
+      const leg = legs && legs[i];
+      if (!leg || (!on && V.rib.R[slot * 2 + i].n === 0)) {
+        if (!leg) V.rib.feed(slot * 2 + i, p.pos, false, this.time, w, pal.head, pal.tail, 1);
+        continue;
+      }
+      (leg.jet || leg.foot || leg.knee).getWorldPosition(_p);
+      _p.addScaledVector(p.forward, -0.05 * big);
+      V.rib.feed(slot * 2 + i, _p, on, this.time, me ? w * 0.6 : w, pal.head, pal.tail, me ? 0.75 : 1, me ? 6.8 : 0);
+      // かかとの噴射口の光
+      if (on && near) V.glowNow(_p, (0.55 + Math.random() * 0.16) * big * (st === 'dash' ? 1.25 : 1) * (me ? 0.6 : 1), pal.glow, me ? 1.5 : 2.2, me ? 0.7 : 1.5);
+    }
+    // ブーストの出だし：足もとに光の輪と火花（状態の変化で見るので、オンラインのほかの端末でも出る）
+    if (st === 'dash' && J.st !== 'dash' && p.alive && near && legs) this.boostFx(p, pal, big);
+    J.st = st;
+    // 強い着地：けむりが横に広がる
+    const g = !!p.ground;
+    J.landT -= dt;
+    if (g && !J.ground && p.alive && J.landT <= 0 && near) {
+      const fall = -J.vy;
+      if (fall > 7 || J.spd > 19) {
+        this.landFx(p, clamp(Math.max(fall, J.spd * 0.6) / 13, 0.7, 1.6));
+        J.landT = 0.45;
+      }
+    }
+    J.ground = g;
+  }
+  boostFx(p, pal, big) {
+    const V = this.vfx;
+    _p.copy(p.pos).addScaledVector(p.forward, -0.7 * big);
+    _p.y -= 0.45 * big;
+    V.ring(_p, pal.glow, 0.25 * big, 1.5 * big, 0.2, true, 0.9, 'ring', 1.6);
+    V.spark({ cell: CELL.STAR4, pos: _p, s0: 0.5 * big, s1: 1.9 * big, life: 0.16, ease: 1, rot: rand(-0.3, 0.3), color: pal.glow, i: 1.8, core: 1.6, fadePow: 1.5 });
+    for (let i = 0; i < 6; i++) {
+      randDirLocal(_v, p.forward, -1, 0.45);
+      V.spark({ cell: CELL.SPARK, pos: _p, vel: _v.multiplyScalar(rand(10, 18)), drag: 6, s0: 0.14 * big, s1: 0.04, align: 0.03, life: rand(0.15, 0.25), color: i % 2 ? pal.glow : 0xffffff, i: 2.0, core: 1.2 });
+    }
+  }
+  landFx(p, k) {
+    _p.copy(p.pos);
+    _p.y -= 0.68;
+    this.vfx.smokeBurst(_p, { n: 7, flat: true, r: 0.5, speed: 5.5 * k, size: 0.55 + 0.45 * k, life: 0.7, light: 0xf3f1ec, shade: 0x98a0bf, grav: -0.4, drag: 4.2, erode: 0.25 });
+    this.vfx.ring(_p, 0xffffff, 0.4, 2.4 * k, 0.3, false, 0.55);
+  }
+
+  // ===== 擬音 =====
+  // 自分がかかわる当たり、またはカメラの近く（25m）だけ（画面がごちゃごちゃしないように）
+  wordOk(t, src) {
+    const P = this.match.player;
+    return t === P || src === P || (t && t.pos && t.pos.distanceToSquared(this.camPos) < 625);
+  }
+  wordAt(id, at, frac, side = 0, top = false) {
+    const V = this.vfx;
+    const sd = side || (Math.random() < 0.5 ? -1 : 1);
+    _w.copy(at).addScaledVector(V.camUp, rand(0.8, 1.15)).addScaledVector(V.camRight, sd * rand(0.7, 1.1));
+    // 画面からはみ出さないように、文字の大きさのぶん内がわへ（同じ奥行きのまま）
+    const cam = this.match.camera;
+    if (cam) {
+      _w.project(cam);
+      if (_w.z > -1 && _w.z < 1) {
+        const mx = Math.min(0.9, frac * 1.15 + 0.02);
+        const my = Math.min(0.8, frac * (cam.aspect || 0.5) * 0.55 + 0.05);
+        _w.x = clamp(_w.x, -1 + mx, 1 - mx);
+        _w.y = clamp(_w.y, -1 + my, 1 - my);
+      }
+      _w.unproject(cam);
+    }
+    V.word(id, _w, frac, sd * rand(0.1, 0.22), top);
+  }
+
   hit(t, src, dmg, o = {}) {
     const p = t.pos;
-    const color = o.guardian ? 0xffd34d : o.heavy ? 0xffe06b : 0xffffff;
-    for (let i = 0; i < (o.heavy ? 16 : 9); i++) {
-      this.parts.emit(p.x, p.y + 0.3, p.z, rand(-1, 1) * 9, rand(-0.5, 1) * 9, rand(-1, 1) * 9, rand(0.18, 0.35), rand(0.5, 0.9), 0.05, color, 5);
+    const heavy = !!o.heavy;
+    // ふっとぶ向き（攻撃した人 → 当たった人）。当たった所は、相手の体の少し手前
+    if (src && src.pos && src !== t) _d.subVectors(p, src.pos);
+    else _d.subVectors(p, this.camPos);
+    if (_d.lengthSq() < 1e-6) _d.set(0, 0, 1);
+    _d.normalize();
+    _c0.copy(p).addScaledVector(_d, t.isGuardian ? -(t.radius || 2) * 0.6 : -0.35);
+    _c0.y += t.isGuardian ? 0.6 : 0.25;
+    const far = p.distanceToSquared(this.camPos) > 6400;
+    if (!far) {
+      const s = clamp(0.8 + dmg / 1600, 0.8, 1.3);
+      const elem = src && src.elem && ACCENT[src.elem] ? src.elem : null;
+      this.vfx.impact(_c0, _d, s, { heavy, main: o.guardian ? 0xffd34d : undefined, accent: elem ? ACCENT[elem] : o.guardian ? 0xffd34d : null, elem, weak: !!o.weak });
+      const color = o.guardian ? 0xffd34d : heavy ? 0xffe06b : 0xffffff;
+      for (let i = 0; i < (heavy ? 5 : 2); i++) this.parts.emit(_c0.x, _c0.y, _c0.z, rand(-1, 1) * 8, rand(-0.5, 1) * 8, rand(-1, 1) * 8, rand(0.15, 0.3), rand(0.25, 0.45), 0.04, color, 5);
+      // 強い当たりは擬音（ドゴッ! など）
+      if (heavy && !o.guardian && this.wordOk(t, src)) {
+        const id = o.kind === 'dash' ? WORD.DON : o.kind === 'ks' || o.kind === 'special' ? (Math.random() < 0.5 ? WORD.ZUGAN : WORD.DON) : HIT_WORDS[(Math.random() * HIT_WORDS.length) | 0];
+        this.wordAt(id, _c0, o.kind === 'dash' || o.kind === 'special' ? 0.5 : 0.42);
+      }
     }
-    this.ring(p, o.heavy ? 0xffe06b : 0xffffff, 0.3, o.heavy ? 2.6 : 1.6, 0.22, true, 0.9);
     const mine = t.isPlayer;
     const byMe = src && src.isPlayer;
     let cls = mine ? 'hurt' : byMe ? 'mine' : 'other';
@@ -439,42 +481,87 @@ export class FX {
   miss(t) {
     this.num(_v.copy(t.pos).add(new THREE.Vector3(0, 1.3, 0)), 'MISS', 'miss', 0.6);
   }
+  // ジャスト回避：水色の十字の光・集中線・輪・破片
   just(t) {
-    for (let i = 0; i < 24; i++) {
-      const a = rand(0, 6.28);
-      this.parts.emit(t.pos.x, t.pos.y, t.pos.z, Math.cos(a) * 6, rand(-2, 3), Math.sin(a) * 6, 0.6, 1.4, 0.2, 0xbfe8ff, 3);
+    const V = this.vfx;
+    const c = t.pos;
+    V.spark({ cell: CELL.FLARE, pos: c, s0: 1.2, s1: 5.2, life: 0.36, ease: 1, rot: rand(-0.15, 0.15), color: 0x8fe6ff, i: 2.2, core: 2.6, occ: 0.08, fadePow: 1.5 });
+    V.spark({ cell: CELL.STAR4, pos: c, s0: 0.6, s1: 2.8, life: 0.3, ease: 2, rot: Math.PI / 4, color: 0xc8f6ff, i: 2.0, core: 2.2, fadePow: 1.4, hold: 0.3 });
+    V.spark({ cell: CELL.LINES, pos: c, s0: 2.4, s1: 6, life: 0.24, ease: 1, rot: rand(0, 6.28), color: 0x6fd8ff, i: 1.5, core: 0.9, occ: 0.05, fadePow: 1.2 });
+    V.ring(c, 0x9fe3ff, 0.5, 3.8, 0.4, true, 0.95);
+    V.ring(c, 0xffffff, 0.3, 2.2, 0.22, true, 0.85);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * 6.28 + rand(-0.2, 0.2);
+      _v.copy(V.camRight).multiplyScalar(Math.cos(a)).addScaledVector(V.camUp, Math.sin(a));
+      V.spark({ cell: CELL.SHARD, pos: c, vel: _v.multiplyScalar(rand(14, 20)), drag: 7, s0: 0.7, s1: 0.2, asp: 0.6, align: 0.004, life: 0.3, color: 0x9fe8ff, i: 2.0, core: 1.4, occ: 0.3 });
     }
-    this.ring(t.pos, 0x9fe3ff, 0.5, 3.5, 0.4, true, 0.9);
-    this.num(_v.copy(t.pos).add(new THREE.Vector3(0, 1.6, 0)), 'JUST!', 'just', 0.9, 1.0);
+    for (let i = 0; i < 12; i++) {
+      const a = rand(0, 6.28);
+      this.parts.emit(c.x, c.y, c.z, Math.cos(a) * 6, rand(-2, 3), Math.sin(a) * 6, 0.5, 1.1, 0.2, 0xbfe8ff, 3);
+    }
+    this.num(_v.copy(c).add(new THREE.Vector3(0, 1.6, 0)), 'JUST!', 'just', 0.9, 1.0);
+    if (this.wordOk(t, null)) this.wordAt(WORD.HYUN, c, 0.4);
   }
   shieldHit(t) {
-    this.ring(t.pos, 0x7ad0ff, 1.2, 1.7, 0.2, true, 0.7);
+    this.ring(t.pos, 0x7ad0ff, 1.2, 1.8, 0.22, true, 0.8, hexGeo);
+    this.vfx.spark({ cell: CELL.HEXF, pos: t.pos, s0: 2.6, s1: 3.2, life: 0.18, ease: 1, rot: rand(0, 6.28), color: 0x7ad0ff, i: 0.9, core: 0, fadePow: 1.5 });
   }
 
+  // 波紋の輪（まとめ描き。geo で形：丸・六角の輪・六角の板）
   ring(pos, color, r0, r1, life, face = false, op = 0.9, geo = ringGeo) {
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
-    m.position.copy(pos);
-    if (!face) m.rotation.x = -Math.PI / 2;
-    m.scale.setScalar(r0);
-    this.scene.add(m);
-    this.rings.push({ mesh: m, t: 0, life, r0, r1, face, op });
+    this.vfx.ring(pos, color, r0, r1, life, face, op, geo === hexGeo ? 'hex' : geo === hexFill ? 'hexf' : 'ring');
   }
   shock(pos, color, r) {
+    const V = this.vfx;
     this.ring(pos, color, 0.5, r, 0.5, false, 0.95);
     this.ring(pos, color, 0.5, r * 0.8, 0.4, true, 0.7);
-    for (let i = 0; i < 30; i++) {
+    V.spark({ cell: CELL.SHOCK, pos, s0: 1, s1: r * (r >= 8 ? 1.3 : 1.9), life: 0.42, ease: 1, color, i: r >= 8 ? 0.55 : 1.2, core: r >= 8 ? 0.5 : 1.2, occ: 0, fadePow: 1.3 });
+    for (let i = 0; i < 18; i++) {
       const a = rand(0, 6.28);
-      this.parts.emit(pos.x, pos.y, pos.z, Math.cos(a) * r * 1.6, rand(-2, 2), Math.sin(a) * r * 1.6, 0.5, 1.2, 0.2, color, 3);
+      this.parts.emit(pos.x, pos.y, pos.z, Math.cos(a) * r * 1.6, rand(-2, 2), Math.sin(a) * r * 1.6, 0.5, 0.8, 0.15, color, 3);
+    }
+    if (r >= 8) {
+      // スペシャルの衝撃：大きな光・集中線・地面を走るけむり・擬音
+      V.spark({ cell: CELL.GLOW, pos, s0: 1.5, s1: Math.min(5, r * 0.4), life: 0.18, ease: 1, color: 0xffffff, i: 1.6, core: 1.4, fadePow: 2 });
+      V.spark({ cell: CELL.LINES, pos, s0: 2.5, s1: Math.min(9, r * 0.7), life: 0.28, ease: 1, rot: rand(0, 6.28), color, i: 1.2, core: 0.8, occ: 0.05, fadePow: 1.3 });
+      _p.copy(pos);
+      _p.y -= 0.6;
+      _ca.set(color).lerp(GRAY, 0.55);
+      V.smokeBurst(_p, { n: 12, flat: true, r: 1, speed: r * 1.5, size: 1.5, life: 0.85, light: _ca.getHex(), shade: 0x8a90b4, grav: -0.6, drag: 3.4 });
+      if (this.match.player && (pos.distanceToSquared(this.match.player.pos) < 400 || pos.distanceToSquared(this.camPos) < 625)) this.wordAt(WORD.DODODO, pos, 0.62, 1);
+    } else {
+      V.spark({ cell: CELL.STAR4, pos, s0: 0.8, s1: r * 1.2, life: 0.2, ease: 1, rot: rand(-0.3, 0.3), color, i: 1.8, core: 2.0, fadePow: 1.6 });
     }
   }
+  // 爆発：火の玉の光・トゲの星・衝撃の輪・火の粉・セル塗りのけむり（火の色 → 灰色）
   boom(pos, color, r) {
-    for (let i = 0; i < 40; i++) {
-      this.parts.emit(pos.x, pos.y, pos.z, rand(-1, 1) * r * 3, rand(-1, 1) * r * 3, rand(-1, 1) * r * 3, rand(0.3, 0.7), rand(1.2, 2.2), 0.1, i % 3 ? color : 0xffffff, 3.5);
-    }
+    const V = this.vfx;
+    _ca.set(color);
+    V.spark({ cell: CELL.GLOW, pos, s0: r * 0.8, s1: r * 2.4, life: 0.2, ease: 1, color: 0xfff1c8, i: 2.6, core: 2.4, fadePow: 1.6 });
+    V.spark({ cell: CELL.STAR2, pos, s0: r * 0.5, s1: r * 2.1, life: 0.22, ease: 2, rot: rand(0, 6.28), color, i: 2.2, core: 2.0, occ: 0.2, fadePow: 1.5, hold: 0.3 });
+    V.spark({ cell: CELL.SHOCK, pos, s0: r * 0.6, s1: r * 2.6, life: 0.4, ease: 1, color, i: 1.4, core: 1.3, occ: 0.06, fadePow: 1.2 });
     this.ring(pos, color, 0.5, r * 1.3, 0.45, true, 0.9);
+    const n = Math.min(18, 8 + r * 2) | 0;
+    for (let i = 0; i < n; i++) {
+      _v.set(rand(-1, 1), rand(-0.4, 1), rand(-1, 1)).normalize();
+      V.spark({ cell: CELL.SPARK, pos, vel: _v.multiplyScalar(rand(2.5, 4.5) * r + 4), drag: 4, grav: 9, s0: 0.22, s1: 0.06, align: 0.03, life: rand(0.3, 0.55), color: i % 3 ? 0xffb02e : 0xffffff, i: 2.4, core: 1.4, fadePow: 1 });
+    }
+    // けむり（色は爆発の色から：明るい所は白っぽく、影は暗い紫寄り）
+    _cb.copy(_ca).lerp(DARK, 0.45);
+    _ca.lerp(WARM, 0.62);
+    V.smokeBurst(pos, { n: Math.min(14, 6 + r * 1.4), r: r * 0.35, speed: r * 2.1 + 2, size: r * 0.6 + 0.6, life: 1.05, light: _ca.getHex(), shade: _cb.getHex(), light1: 0xe8e6e2, shade1: 0x727896, up: 0.25, delay: 0.05 });
+    for (let i = 0; i < 10; i++) {
+      this.parts.emit(pos.x, pos.y, pos.z, rand(-1, 1) * r * 3, rand(-1, 1) * r * 3, rand(-1, 1) * r * 3, rand(0.3, 0.6), rand(0.5, 0.9), 0.05, i % 3 ? color : 0xffffff, 3.5);
+    }
+    if (r >= 5.5 && pos.distanceToSquared(this.camPos) < 900) this.wordAt(WORD.DOKAN, pos, 0.55, 1);
   }
   puff(pos, color) {
-    for (let i = 0; i < 8; i++) this.parts.emit(pos.x, pos.y, pos.z, rand(-3, 3), rand(-3, 3), rand(-3, 3), 0.3, 0.7, 0.1, color, 4);
+    for (let i = 0; i < 5; i++) this.parts.emit(pos.x, pos.y, pos.z, rand(-3, 3), rand(-3, 3), rand(-3, 3), 0.3, 0.7, 0.1, color, 4);
+    if (pos.distanceToSquared(this.camPos) < 2500) {
+      _ca.set(color).lerp(GRAY, 0.6);
+      this.vfx.smokeBurst(pos, { n: 2, r: 0.1, speed: 1.5, size: 0.7, life: 0.45, light: _ca.getHex(), shade: 0x8f97b8, erode: 0.2 });
+      this.vfx.spark({ cell: CELL.GLOW, pos, s0: 0.4, s1: 1.2, life: 0.1, color, i: 2, core: 1.5, fadePow: 1.5 });
+    }
   }
   pickup(p, at) {
     for (let i = 0; i < 6; i++) this.parts.emit(at.x, at.y, at.z, rand(-3, 3), rand(0, 4), rand(-3, 3), 0.4, 0.8, 0.1, 0xff8fc0, 3);
@@ -488,13 +575,44 @@ export class FX {
     this.parts.emit(p.pos.x, p.pos.y, p.pos.z, _v.x * 2.2, _v.y * 2.2 + 3, _v.z * 2.2, 0.45, 1.1, 0.4, 0xff8fc0, 0.5);
     if (p.isPlayer) this.num(_v2.copy(g.pos).add(new THREE.Vector3(0, 4.5, 0)), '+1', 'pick', 0.5, 1.5);
   }
+  // 壁キック：壁に白いトゲの光、壁にそって広がるけむり
   wallKick(p, n) {
-    this.ring(p.pos, 0xffffff, 0.4, 2.2, 0.25, true, 0.9);
-    for (let i = 0; i < 10; i++) this.parts.emit(p.pos.x, p.pos.y, p.pos.z, n.x * 6 + rand(-3, 3), n.y * 6 + rand(-3, 3), n.z * 6 + rand(-3, 3), 0.3, 0.6, 0.05, 0xffffff, 3);
+    const V = this.vfx;
+    _p.copy(p.pos).addScaledVector(n, -0.7);
+    this.ring(_p, 0xffffff, 0.4, 2.4, 0.25, true, 0.9);
+    V.spark({ cell: CELL.STAR, pos: _p, s0: 0.5, s1: 2.0, life: 0.14, ease: 2, rot: rand(0, 6.28), color: 0xfff3b8, i: 2.0, core: 2.2, occ: 0.2, fadePow: 1.6 });
+    V.smokeBurst(_p, { n: 5, dir: n, spread: 1.4, r: 0.3, speed: 4.5, size: 0.85, life: 0.65, light: 0xf5f4f0, shade: 0x9aa2c0, grav: -0.4, erode: 0.25 });
+    for (let i = 0; i < 6; i++) {
+      _v.set(n.x * 6 + rand(-4, 4), n.y * 6 + rand(-4, 4), n.z * 6 + rand(-4, 4));
+      V.spark({ cell: CELL.SPARK, pos: _p, vel: _v, drag: 5, grav: 6, s0: 0.16, s1: 0.05, align: 0.03, life: 0.25, color: 0xffffff, i: 2.2, core: 1.2 });
+    }
   }
+  // 倒した：大きな光・チームの色の星と集中線・白い破片・けむり・擬音「ズドーン!!」
   ko(p) {
-    this.boom(p.pos, TEAM[p.team].hex, 2.5);
-    this.ring(p.pos, 0xffffff, 0.5, 5, 0.5, true, 0.95);
+    const V = this.vfx;
+    const c = p.pos;
+    const T = TEAM[p.team];
+    V.spark({ cell: CELL.GLOW, pos: c, s0: 1.4, s1: 4, life: 0.16, ease: 1, color: 0xffffff, i: 1.7, core: 1.6, fadePow: 2 });
+    V.spark({ cell: CELL.STAR, pos: c, s0: 0.8, s1: 3.7, life: 0.3, ease: 2, rot: rand(0, 6.28), color: T.light, i: 1.9, core: 1.2, occ: 0.3, fadePow: 1.5, hold: 0.3 });
+    V.spark({ cell: CELL.STAR4, pos: c, delay: 0.04, s0: 1.2, s1: 5.2, life: 0.3, ease: 1, rot: rand(-0.3, 0.3), color: T.hex, i: 1.7, core: 1.4, occ: 0.2, fadePow: 1.6 });
+    V.spark({ cell: CELL.LINES, pos: c, s0: 2, s1: 6.2, life: 0.24, ease: 1, rot: rand(0, 6.28), color: 0xffffff, i: 1.25, core: 1.0, occ: 0.08, fadePow: 1.3 });
+    V.ring(c, 0xffffff, 0.5, 4.2, 0.4, true, 1);
+    V.ring(c, T.hex, 0.5, 6, 0.55, true, 0.9);
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * 6.28 + rand(-0.25, 0.25);
+      _v.copy(V.camRight).multiplyScalar(Math.cos(a)).addScaledVector(V.camUp, Math.sin(a)).addScaledVector(V.camFwd, rand(-0.3, 0.3));
+      V.spark({ cell: CELL.SHARD, pos: c, vel: _v.multiplyScalar(rand(16, 26)), drag: 7, s0: rand(0.7, 1.0), s1: 0.22, asp: 0.6, align: 0.004, life: rand(0.25, 0.38), color: 0xffffff, i: 1.7, core: 1.2, occ: 0.5 });
+    }
+    for (let i = 0; i < 14; i++) {
+      _v.set(rand(-1, 1), rand(-0.5, 1), rand(-1, 1)).normalize();
+      V.spark({ cell: CELL.SPARK, pos: c, vel: _v.multiplyScalar(rand(12, 26)), drag: 4, grav: 8, s0: 0.24, s1: 0.06, align: 0.03, life: rand(0.3, 0.55), color: i % 2 ? T.hex : 0xffffff, i: 2.4, core: 1.5 });
+    }
+    _ca.set(T.light).lerp(GRAY, 0.35);
+    _cb.set(T.dark).lerp(DARK, 0.3);
+    V.smokeBurst(c, { n: 9, r: 0.6, speed: 6.5, size: 1.5, life: 1.05, light: _ca.getHex(), shade: _cb.getHex(), light1: 0xeeeef2, shade1: 0x767ea2, up: 0.15, delay: 0.06 });
+    for (let i = 0; i < 10; i++) this.parts.emit(c.x, c.y, c.z, rand(-1, 1) * 9, rand(-1, 1) * 9, rand(-1, 1) * 9, rand(0.3, 0.6), rand(0.4, 0.8), 0.05, i % 3 ? T.hex : 0xffffff, 3.5);
+    const P = this.match.player;
+    if (p === P || p.killedBy === P || c.distanceToSquared(this.camPos) < 625) this.wordAt(WORD.ZUDON, c, 0.72, 1, true);
   }
   respawn(p) {
     this.ring(p.pos, TEAM[p.team].light, 0.3, 3.5, 0.5, false, 0.9);
@@ -508,8 +626,14 @@ export class FX {
       const s = rand(4, 22);
       this.parts.emit(p.pos.x, p.pos.y + 0.4, p.pos.z, dir.x * s + rand(-4, 4), dir.y * s + rand(-3, 3), dir.z * s + rand(-4, 4), 0.35, 2.4, 0.4, 0xffffff, 3);
     }
-    this.ring(_v.copy(p.pos).addScaledVector(dir, 2), 0xffffff, 0.5, 6, 0.3, true, 1);
+    _p.copy(p.pos).addScaledVector(dir, 2);
+    this.ring(_p, 0xffffff, 0.5, 6, 0.3, true, 1);
+    const V = this.vfx;
+    V.spark({ cell: CELL.FLARE, pos: _p, s0: 2, s1: 9, life: 0.32, ease: 1, rot: rand(-0.2, 0.2), color: 0xfff6c8, i: 2.6, core: 3, fadePow: 1.6 });
+    V.spark({ cell: CELL.GLOW, pos: _p, s0: 2, s1: 6, life: 0.2, ease: 1, color: 0xffffff, i: 2.6, core: 2.4, fadePow: 1.8 });
+    V.spark({ cell: CELL.LINES, pos: _p, s0: 3, s1: 10, life: 0.24, ease: 1, rot: rand(0, 6.28), color: 0xfff2b0, i: 1.6, core: 1.2, fadePow: 1.3 });
     if (this.match.player && this.match.player === p) this.match.screenFlash('#ffffff', 0.25);
+    if (this.wordOk(p, null)) this.wordAt(WORD.PIKA, _p, 0.55, 1);
   }
   dizzy(t, dur) {
     this.num(_v.copy(t.pos).add(new THREE.Vector3(0, 1.9, 0)), '★', 'dizzy', dur, 0.2);
@@ -523,6 +647,10 @@ export class FX {
       this.parts.emit(p.pos.x, p.pos.y, p.pos.z, Math.cos(a) * 10, rand(-2, 6), Math.sin(a) * 10, 0.9, 1.6, 0.1, i % 2 ? 0xfff2a8 : 0xffb0e0, 2);
     }
     this.ring(p.pos, 0xffd1f0, 0.5, 16, 0.6, false, 0.9);
+    for (let i = 0; i < 7; i++) {
+      _p.set(p.pos.x + rand(-1.4, 1.4), p.pos.y + rand(-0.6, 1.6), p.pos.z + rand(-1.4, 1.4));
+      this.vfx.spark({ cell: CELL.FLARE, pos: _p, delay: i * 0.06, s0: 0.3, s1: rand(1.6, 2.6), life: 0.4, ease: 2, rot: rand(-0.3, 0.3), color: i % 2 ? 0xfff2a8 : 0xffb0e0, i: 2.4, core: 2.4, fadePow: 1.4, hold: 0.3 });
+    }
     this.num(_v.copy(p.pos).add(new THREE.Vector3(0, 2.2, 0)), 'キラーン', 'kira', 1.2, 1.2);
   }
   laughs(p) {
@@ -539,6 +667,7 @@ export class FX {
   }
   warpFx(pos) {
     this.ring(pos, 0x7af0ff, 0.3, 3, 0.35, true, 0.9);
+    this.vfx.spark({ cell: CELL.STAR4, pos, s0: 0.5, s1: 3, life: 0.25, ease: 1, rot: rand(-0.3, 0.3), color: 0x7af0ff, i: 2.2, core: 2, fadePow: 1.5 });
     for (let i = 0; i < 16; i++) this.parts.emit(pos.x, pos.y, pos.z, rand(-6, 6), rand(-6, 6), rand(-6, 6), 0.3, 0.9, 0.1, 0x7af0ff, 4);
   }
   elemSwitch(p) {
@@ -784,9 +913,10 @@ export class FX {
     const k = o.kind;
     if (k === 'ink') {
       const team = o.owner && o.owner.team != null ? o.owner.team : 0;
-      m = new THREE.Mesh(pcache('inkG', () => new THREE.SphereGeometry(0.32, 10, 8)), pcache('inkM', () => new THREE.MeshBasicMaterial({ color: 0x1b2a4a })));
-      const glow = new THREE.Sprite(pcache('inkS' + team, () => new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[team].hex, transparent: true, opacity: 0.8, depthWrite: false })));
-      glow.scale.set(1.6, 1.6, 1);
+      // インクの玉：黒い芯＋チームの色で光るふち（空の前でも「穴」に見えないように）
+      m = new THREE.Mesh(pcache('inkG2', () => new THREE.SphereGeometry(0.24, 10, 8)), pcache('inkM', () => new THREE.MeshBasicMaterial({ color: 0x1b2a4a })));
+      const glow = new THREE.Sprite(pcache('inkS2' + team, () => new THREE.SpriteMaterial({ map: glowTex(), color: new THREE.Color(TEAM[team].hex).multiplyScalar(1.5), transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending })));
+      glow.scale.set(1.15, 1.15, 1);
       m.add(glow);
     } else if (k === 'akahon' || k === 'tangocho' || k === 'pencil') {
       m = pcache('tpl_' + k, () => projTemplate(k)).clone();
@@ -845,9 +975,9 @@ export class FX {
     }
     this.beams.length = 0;
     this.projMeshes.clear();
-    for (const [, tr] of this.trails) tr.forEach((t) => t.dispose(this.scene));
-    this.trails.clear();
-    for (const r of this.rings) this.scene.remove(r.mesh);
+    this.vfx.clear();
+    this.vfx.dispose();
+    this.jets.clear();
     this.rings.length = 0;
     for (const n of this.nums) n.el.remove();
     this.nums.length = 0;

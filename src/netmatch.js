@@ -1145,6 +1145,7 @@ export class ClientMatch extends Match {
       this.sendMe(dtReal);
     }
     this.fx.update(dt, this.camera);
+    this.shadows.update(this.punchers);
     // 足もとの光：ダイブ中のほかの人
     for (const p of this.punchers) if (p !== P && p.alive && p.state === 'skill' && p.def.skill.id === 'goggleDive' && Math.random() < 0.6) this.fx.trail(p, 0x7af0ff);
     this.stage.update(dt, this.time, this.camera.position);

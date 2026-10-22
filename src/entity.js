@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { MOVE, COMBAT, RESPAWN_TIME, RESPAWN_INVULN, ELEM } from './config.js';
 import { OMAMORI } from './characters.js';
-import { buildPuncher, poseModel, setJetGlow } from './model.js';
+import { buildPuncher, poseModel, setJetGlow, FACES } from './model.js';
 import { clamp, damp, angleDamp, wrapAngle, lerp } from './util.js';
 import { makeHitInfo } from './physics.js';
 
@@ -339,6 +339,12 @@ export class Puncher {
     return true;
   }
 
+  // エモート（身ぶり）をする。上半身だけなので、飛びながらでもできる
+  emote(name, dur = 1.3) {
+    this.emoteName = name;
+    this.emoteT = dur;
+    this.emoteDur = dur;
+  }
   addSP(v) {
     if (!this.alive) return;
     const before = this.sp;
@@ -640,6 +646,12 @@ export class Puncher {
     else if (this.state === 'dash') mode = 'dash';
     else if (this.ground && this.state !== 'step') mode = 'ground';
     else if (flying && sp > 3) mode = 'fly';
+    // 試合が終わったら：勝ったチームは勝ちポーズ、負けたチームはうなだれる（引き分けはそのまま）
+    const M = this.match;
+    if (this.alive && M.result && (M.phase === 'result' || (M.phase === 'finish' && M.phaseT > 0.5))) {
+      const w = M.result.winner;
+      if (w === 0 || w === 1) mode = w === this.team ? 'win' : 'lose';
+    }
     if (mode === 'ground') this.runPhase += dt * (sp * 0.95 + 0.1);
     const pst = this._pst || (this._pst = {});
     pst.mode = mode;
@@ -650,6 +662,13 @@ export class Puncher {
     pst.punchPhase = Math.max(0, this.atk.phase);
     pst.heavy = this.atk.heavy;
     pst.runPhase = this.runPhase;
+    // 表情：アオッチのメガネオフ（イケメン）中はキラキラの目
+    pst.face = this.buffs.ikemen > 0 && this.alive && !(this.hurtT > 0) && mode !== 'punch' && mode !== 'shoot' ? FACES.special : -1;
+    // エモート（スタンプの身ぶり）
+    if (this.emoteT > 0) this.emoteT -= dt;
+    pst.emote = this.emoteT > 0 ? this.emoteName : null;
+    pst.emoteT = this.emoteT;
+    pst.emoteDur = this.emoteDur;
     poseModel(m, pst, dt);
     const jet = this.alive && (mode === 'fly' || mode === 'dash');
     if (jet !== this.jetOn) {

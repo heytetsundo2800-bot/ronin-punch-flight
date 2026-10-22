@@ -15,8 +15,13 @@ import { sound } from './audio.js';
 import { shuffle, el, clamp, rand, vibrate } from './util.js';
 import { disposeDeep } from './gfx.js';
 import { buildMonster } from './monsters.js';
+import { BlobShadows } from './shadow.js';
+import { GRADES } from './post.js';
+import { KO_EMOTE } from './model.js';
 
 const _v = new THREE.Vector3();
+// スタンプ → 身ぶり（ナイス・ありがとう・集まれ・守って・攻める・ドンマイ・ガハハ・ごめん）
+const STAMP_EMOTE = ['thumbs', 'bow', 'wave', 'point', 'flex', 'thumbs', 'laugh', 'sorry'];
 
 export class Match {
   constructor(app, opts) {
@@ -99,6 +104,8 @@ export class Match {
     // スタート位置
     for (const p of this.punchers) this.placeAtBase(p);
     this.fx = new FX(this, app.fxLayer);
+    this.shadows = new BlobShadows(this.scene, this.world);
+    this.grade = GRADES[this.stage.id] || GRADES.sakura; // 仕上げの色（post.js）
     this.fxNoBoost = (p) => this.fx.noBoost(p);
     this.cam = new FollowCam(this.camera, this.world);
     this.hud = new Hud(app.hudRoot, this, app.portraits);
@@ -127,8 +134,34 @@ export class Match {
       for (const p of this.punchers) for (const id of p.omamori || []) if (OMAMORI[id] && OMAMORI[id].mon) mons.add(OMAMORI[id].mon);
       for (const m of mons) g.add(buildMonster(m));
       for (const k of ['akahon', 'tangocho', 'pencil']) g.add(projectileLook(k));
+      // 試合では「後処理の板（linear）」に描くので、その形のシェーダーを用意する（画面に直接描く形とは別物）
+      const post = this.app.post;
+      const prev = R.getRenderTarget();
+      R.setRenderTarget(post && post.enabled && !post.failed ? post.main : null);
       R.compile(g, this.camera, this.scene);
+      R.setRenderTarget(prev);
     } catch (e) {}
+    // スペシャルのカットインの絵も、開始の演出のあいだに作っておく（1枚ずつ間をあけて。はじめてのスペシャルで止まらないように）
+    const PT = this.app.portraits, me = this.player;
+    if (!PT || !me) return;
+    const todo = [], seen = new Set();
+    for (const p of this.punchers) {
+      const facing = p.team !== me.team ? -1 : 1;
+      const k = p.def.id + '|' + p.team + '|' + facing;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      todo.push([p.def.id, p.team, facing]);
+    }
+    let i = 0;
+    const step = () => {
+      if (!this.running || i >= todo.length) return;
+      const [id, team, f] = todo[i++];
+      try {
+        PT.cut(id, team, f);
+      } catch (e) {}
+      setTimeout(step, 120);
+    };
+    setTimeout(step, 400);
   }
 
   // オンライン対戦：決まった組み合わせで人を出す
@@ -318,6 +351,8 @@ export class Match {
     const text = STAMPS[i];
     if (!p || !text || p.team !== this.player.team) return;
     this.hud.say(p, text);
+    // スタンプに合わせてキャラも身ぶりをする（エモート）
+    p.emote(STAMP_EMOTE[i] || 'wave');
     sound.play('ui', 0.7);
   }
 
@@ -389,6 +424,7 @@ export class Match {
       if (this.phase === 'finish' && this.phaseT > 2.4) this.toResult();
     }
     this.fx.update(dt, this.camera);
+    this.shadows.update(this.punchers);
     this.stage.update(dt, this.time, this.camera.position);
     if (this.phase !== 'result') this.hud.update(dt, this.camera);
   }
@@ -482,6 +518,8 @@ export class Match {
   koFeedback(victim, killer) {
     if (!victim) return;
     this.fx.ko(victim);
+    // CPU は倒したら、キャラらしい身ぶりで一瞬キメる（攻撃などが始まればそちらが優先）
+    if (killer && killer.cpu && killer.alive && killer.def && killer.emote) killer.emote(KO_EMOTE[killer.def.id] || 'thumbs', 1.0);
     if (victim.isPlayer) {
       sound.play('ko');
       vibrate(120);
@@ -601,6 +639,13 @@ export class Match {
     this.app.bigText(reason && reason.includes('ノックアウト') ? 'KNOCK OUT!' : 'FINISH!', 'finish');
     this.result = this.mode.result();
     this.result.reason = this.result.reason || reason;
+    // 結果画面の大きな絵を、FINISH! のあいだに作っておく（結果が出る瞬間に止まらないように）
+    const me = this.player, w = this.result.winner;
+    setTimeout(() => {
+      try {
+        if (this.app.portraits && me && me.def) this.app.portraits.hero(me.def.id, me.team, w === me.team ? 'win' : w === 0 || w === 1 ? 'lose' : 'hover');
+      } catch (e) {}
+    }, 500);
   }
   toResult() {
     if (this.phase === 'result') return;
@@ -632,6 +677,7 @@ export class Match {
     this.running = false;
     this.input.enabled = false;
     this.input.reset();
+    this.shadows.dispose();
     // 場面にある物をまとめて GPU から消す（取りのぞく前に。使い回す物は残す）
     disposeDeep(this.scene);
     this.combat.clear();
