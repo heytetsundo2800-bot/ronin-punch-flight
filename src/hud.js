@@ -214,9 +214,44 @@ export class Hud {
     this._at = setTimeout(() => this.alert.classList.add('hidden'), 1400);
   }
 
+  // 両手の操作の案内（左＝長押しで飛ぶ／右＝なぞって視点）。はじめの数試合だけ、カウントダウン中〜GOの少しあとまで出す
+  updateGuide(dt) {
+    const M = this.m;
+    if (this.guideState === undefined) {
+      this.guideState = 0;
+      const app = M.app, st = app && app.settings;
+      if (!st || M.isTutorial || st.scheme === 'one' || (st.guideN || 0) >= 6) return;
+      if (M.phase !== 'intro' && M.phase !== 'wait') return;
+      st.guideN = (st.guideN || 0) + 1;
+      if (app.applySettings) app.applySettings();
+      this.guide = el(
+        'div',
+        'twoguide',
+        `<div class="g l"><i class="hand hold">${ICON.touch}</i><b>左の親指</b><span>長押しで飛ぶ<br>スライドで旋回<br>フリックで回避</span></div>` +
+          `<div class="g r"><i class="hand swipe">${ICON.touch}</i><b>右の親指</b><span>なぞって視点<br>タップでブースト</span></div>`
+      );
+      this.root.appendChild(this.guide);
+      this.guideState = 1;
+      this.guideGoAt = 0;
+      requestAnimationFrame(() => this.guide && this.guide.classList.add('on'));
+      return;
+    }
+    if (this.guideState !== 1) return;
+    // GO から2.6秒（ほんとうの時間。重い端末で試合の時間がゆっくりでも、長く残らない）
+    const now = performance.now();
+    if (M.phase === 'play' && !this.guideGoAt) this.guideGoAt = now;
+    if ((this.guideGoAt && now - this.guideGoAt > 2600) || (M.phase !== 'play' && M.phase !== 'intro' && M.phase !== 'wait')) {
+      this.guideState = 2;
+      const g = this.guide;
+      g.classList.remove('on');
+      setTimeout(() => g.remove(), 600);
+      this.guide = null;
+    }
+  }
   update(dt, cam) {
     const M = this.m, me = M.player;
     this.frame++;
+    this.updateGuide(dt);
     const slow = this.frame % 3 === 0;
     // 時間と点数
     if (slow) {

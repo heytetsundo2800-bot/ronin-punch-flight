@@ -1,6 +1,10 @@
 // 操作（タッチ・マウス・キーボード）
 // 長押し＝前へ飛ぶ／スライド＝旋回（仮想スティック）／タップ＝ブーストダッシュ
 // フリック＝回避（上＝前、下＝後ろ、左右）／上→下の連続フリック＝180度ターン
+// 操作のしかた（scheme）：
+//  'two'（両手・ふだん）：画面の左半分＝上の操作ぜんぶ（飛ぶ・旋回・タップ・フリック）
+//                        画面の右半分＝なぞって視点（向き）を直接まわす。タップはブースト
+//  'one'（片手）：画面のどこでも上の操作（キックフライトと同じ）
 import { MOVE } from './config.js';
 import { clamp } from './util.js';
 
@@ -11,6 +15,7 @@ const FLICK_TIME = 0.3;
 const FLICK_DIST = 30;
 const FLICK_SPEED = 0.32; // px/ms
 const DOUBLE_FLICK = 0.52; // 上→下 の連続フリックの受付
+const LOOK_RAD_PER_PX = 0.0075; // 右の親指でなぞったときの、1px あたりの向きの変わり方（約0.43度。右半分を端から端まで＝約90度）
 
 export class Input {
   constructor(surface, ringEl, knobEl) {
@@ -21,10 +26,16 @@ export class Input {
     this.invertY = false;
     this.invertX = false;
     this.sens = 1;
+    this.lookSens = 1; // 右の親指の速さ（せっていで変える）
     this.events = [];
     this.hold = false;
     this.stickX = 0;
     this.stickY = 0;
+    this.lookX = 0; // このフレームで右の親指がまわした向き（ラジアン。右＝プラス）
+    this.lookY = 0; // 上＝プラス
+    this.lookPX = 0; // まだ使っていない、なぞった量（px）
+    this.lookPY = 0;
+    this.scheme = 'two'; // 'two' 両手 / 'one' 片手
     this.main = null; // スティックを動かしている指
     this.keys = new Set();
     this.lastFlick = null;
@@ -62,6 +73,8 @@ export class Input {
     this.events.length = 0;
     this.hold = false;
     this.stickX = this.stickY = 0;
+    this.lookX = this.lookY = 0;
+    this.lookPX = this.lookPY = 0;
     this.main = null;
     this.pointers.clear();
     this.showRing(false);
@@ -78,7 +91,10 @@ export class Input {
     } catch (err) {}
     const t = this.now();
     const p = { id: e.pointerId, x0: e.clientX, y0: e.clientY, ax: e.clientX, ay: e.clientY, x: e.clientX, y: e.clientY, t0: t, moved: 0, minDy: 0, maxDy: 0, isMain: false, mode: 'pending', hist: [[e.clientX, e.clientY, t]] };
+    // 両手：画面の右半分で押した指は「視点の指」（なぞると向きが変わる。飛んだりフリックしたりはしない）
+    p.look = this.scheme === 'two' && e.clientX >= this.splitX();
     this.pointers.set(e.pointerId, p);
+    if (p.look) return;
     if (!this.main) {
       p.isMain = true;
       this.main = p;
@@ -93,6 +109,14 @@ export class Input {
     const p = this.pointers.get(e.pointerId);
     if (!p) return;
     if (e.cancelable) e.preventDefault();
+    if (p.look) {
+      this.lookPX += e.clientX - p.x;
+      this.lookPY += e.clientY - p.y;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      p.moved = Math.max(p.moved, Math.hypot(p.x - p.x0, p.y - p.y0));
+      return;
+    }
     p.x = e.clientX;
     p.y = e.clientY;
     const t = this.now();
@@ -126,6 +150,10 @@ export class Input {
     this.pointers.delete(e.pointerId);
     const t = this.now();
     const dur = t - p.t0;
+    if (p.look) {
+      if (e.type !== 'pointercancel' && dur < TAP_TIME && p.moved < TAP_SLOP) this.push({ type: 'tap', dur });
+      return;
+    }
     const dx = p.x - p.x0, dy = p.y - p.y0;
     const dist = Math.hypot(dx, dy);
     // 最後の0.12秒の速さでフリックを見る
@@ -172,6 +200,7 @@ export class Input {
       this.showRing(false);
       // ほかの指が残っていたら、それをスティックにする
       for (const q of this.pointers.values()) {
+        if (q.look) continue;
         q.isMain = true;
         q.ax = q.x;
         q.ay = q.y;
@@ -245,6 +274,21 @@ export class Input {
     // 指を右へ＝右を向く（キックフライトと同じ）。せっていで反対にもできる
     this.stickX = clamp(sx * this.sens * (this.invertX ? -1 : 1), -1, 1);
     this.stickY = clamp(sy * this.sens * (this.invertY ? -1 : 1), -1, 1);
+    // 右の親指：なぞった分だけ向きを変える（指を上へ＝上を向く）
+    const k = LOOK_RAD_PER_PX * this.lookSens;
+    this.lookX = this.enabled ? this.lookPX * k * (this.invertX ? -1 : 1) : 0;
+    this.lookY = this.enabled ? -this.lookPY * k * (this.invertY ? -1 : 1) : 0;
+    this.lookPX = this.lookPY = 0;
+  }
+  // 両手のとき、左と右を分ける位置（画面のまん中）
+  splitX() {
+    const r = this.surface.getBoundingClientRect ? this.surface.getBoundingClientRect() : null;
+    return r && r.width ? r.left + r.width * 0.5 : (window.innerWidth || 0) * 0.5;
+  }
+  // いま視点の指が画面にふれているか
+  looking() {
+    for (const q of this.pointers.values()) if (q.look) return true;
+    return false;
   }
 
   showRing(on, x, y) {

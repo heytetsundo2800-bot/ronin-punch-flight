@@ -8,12 +8,13 @@ import { sound } from './audio.js';
 import { saveSave } from './save.js';
 
 const STEPS = [
-  { id: 'dash', label: '移動', msg: 'まずは加速の基本。<em>タップ</em>でブーストダッシュしよう！<br><small>黄色いゲージを1つ使う。時間で回復するよ</small>', need: 3, hint: 'center' },
-  { id: 'fly', label: '移動', msg: '<em>長押し</em>で飛び続けよう！<br>押したまま<em>指をスライド</em>すると旋回できる', need: 60, unit: 'm', hint: 'hold' },
-  { id: 'look', label: '移動', msg: '止まっているときは<em>指をすべらせたまま</em>（はなさずに）動かすと、その場で向きを変えられる<br><small>すばやく動かして離すとステップ（回避）になるよ</small>', need: 180, unit: '°', hint: 'swipe' },
-  { id: 'brake', label: '移動', msg: '飛んでいるときに<em>下フリック</em>で急ブレーキ！<br><small>（止まっているときはバックステップ）</small>', need: 2, hint: 'down' },
-  { id: 'step', label: '移動', msg: '止まっているときに<em>横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', need: 2, hint: 'side' },
-  { id: 'uturn', label: '移動', msg: '<em>上→下の連続フリック</em>で、くるっと真後ろを向こう！', need: 1, hint: 'updown' },
+  // two：両手の操作（左の親指で移動・右の親指で視点）のときの文
+  { id: 'dash', label: '移動', msg: 'まずは加速の基本。<em>タップ</em>でブーストダッシュしよう！<br><small>黄色いゲージを1つ使う。時間で回復するよ</small>', two: 'まずは加速の基本。<em>タップ</em>でブーストダッシュしよう！<br><small>左右どちらの親指でもOK。黄色いゲージを1つ使う</small>', need: 3, hint: 'center' },
+  { id: 'fly', label: '移動', msg: '<em>長押し</em>で飛び続けよう！<br>押したまま<em>指をスライド</em>すると旋回できる', two: '<em>左の親指で長押し</em>して飛び続けよう！<br>飛ぶ向きは<em>右の親指でなぞって</em>変えられる', need: 60, unit: 'm', hint: 'hold' },
+  { id: 'look', label: '移動', msg: '止まっているときは<em>指をすべらせたまま</em>（はなさずに）動かすと、その場で向きを変えられる<br><small>すばやく動かして離すとステップ（回避）になるよ</small>', two: '<em>右の親指で画面をなぞる</em>と、視点（向き）がぐるっと動く！<br><small>飛びながらでも、止まっていても使えるよ</small>', need: 180, unit: '°', hint: 'swipe' },
+  { id: 'brake', label: '移動', msg: '飛んでいるときに<em>下フリック</em>で急ブレーキ！<br><small>（止まっているときはバックステップ）</small>', two: '飛んでいるときに<em>左の親指で下フリック</em>で急ブレーキ！<br><small>（止まっているときはバックステップ）</small>', need: 2, hint: 'down' },
+  { id: 'step', label: '移動', msg: '止まっているときに<em>横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', two: '止まっているときに<em>左の親指で横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', need: 2, hint: 'side' },
+  { id: 'uturn', label: '移動', msg: '<em>上→下の連続フリック</em>で、くるっと真後ろを向こう！', two: '<em>左の親指で上→下の連続フリック</em>で、くるっと真後ろを向こう！', need: 1, hint: 'updown' },
   { id: 'collect', label: 'スクランブル', msg: '移動を使いこなして<em>サクラ</em>を集めよう！<br><small>近くを通るだけで取れる。持つほど遅くなる</small>', need: 6, hint: null },
   { id: 'deposit', label: 'スクランブル', msg: '青いダルマに近づいて、右下の<em>「預ける」を長押し</em>！<br><small>預けたサクラは倒されてもなくならない</small>', need: 4, hint: 'deposit' },
   { id: 'attack', label: '攻撃', msg: '敵があらわれた！右の<em>顔アイコンをタップ</em>でロックオン。<br>近づくと<em>自動でパンチ</em>するよ', need: 4, hint: 'lock' },
@@ -38,6 +39,10 @@ export class Tutorial extends Match {
     // 最初はダルマに少しサクラを預けておく（攻撃の目印）
     this.showStep();
   }
+  // 両手の操作（左で移動・右で視点）か
+  twoHands() {
+    return this.input && this.input.scheme === 'two';
+  }
   snapshot() {
     const p = this.player;
     return { state: p.state, stepUp: p.stepUp, pick: p.stats.pick, dep: p.stats.dep, hits: p.stats.hits, om: p.stats.om, ks: p.stats.ks, sp: p.stats.sp, yaw: p.yaw, pos: p.pos.clone() };
@@ -47,7 +52,7 @@ export class Tutorial extends Match {
     if (!S) return;
     this.count = 0;
     this.box.querySelector('.lbl').textContent = S.label + ' ' + (this.step + 1) + '/' + STEPS.length;
-    this.box.querySelector('.msg').innerHTML = S.msg;
+    this.box.querySelector('.msg').innerHTML = this.twoHands() && S.two ? S.two : S.msg;
     const b = this.box.querySelector('.box');
     b.style.animation = 'none';
     void b.offsetWidth;
@@ -101,7 +106,8 @@ export class Tutorial extends Match {
         break;
       }
       case 'look':
-        if (!p.intent.hold && (p.state === 'hover' || p.ground)) {
+        // 止まってスライド（片手）か、右の親指（両手：飛びながらでも数える）
+        if (p.state !== 'uturn' && ((p.intent.lookActive && !p.lock) || (!p.intent.hold && (p.state === 'hover' || p.ground)))) {
           let d = now.yaw - pv.yaw;
           while (d > Math.PI) d -= Math.PI * 2;
           while (d < -Math.PI) d += Math.PI * 2;
@@ -168,7 +174,12 @@ export class Tutorial extends Match {
     else if (S.hint === 'sp') r = H.spBtn.getBoundingClientRect();
     else if (S.hint === 'deposit' && !H.depBtn.classList.contains('hidden')) r = H.depBtn.getBoundingClientRect();
     else if (S.hint === 'lock' && !this.player.lock && H.lockBtns[0] && !H.lockBtns[0].b.classList.contains('hidden')) r = H.lockBtns[0].b.getBoundingClientRect();
-    else if (S.hint === 'center' || S.hint === 'hold' || S.hint === 'swipe' || S.hint === 'down' || S.hint === 'side' || S.hint === 'updown') r = { left: this.viewW / 2 - 20, top: this.viewH * 0.62, width: 40, height: 40 };
+    else if (S.hint === 'center' || S.hint === 'hold' || S.hint === 'swipe' || S.hint === 'down' || S.hint === 'side' || S.hint === 'updown') {
+      // 両手のときは、移動（長押し・フリック）は画面の左、視点（なぞる）は右に手を出す
+      let cx = this.viewW / 2;
+      if (this.twoHands()) cx = S.hint === 'swipe' ? this.viewW * 0.74 : this.viewW * 0.27;
+      r = { left: cx - 20, top: this.viewH * 0.62, width: 40, height: 40 };
+    }
     if (!r) {
       h.classList.add('hidden');
       return;

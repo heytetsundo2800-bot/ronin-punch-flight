@@ -87,6 +87,8 @@ function quadMat(frag, uniforms) {
 // ステージごとの色の仕上げ（にじみの強さ・しきい値・彩度・コントラスト・暗部の色・明部の色・周辺減光）
 export const GRADES = {
   lobby: { strength: 0.55, threshold: 0.95, knee: 0.3, sat: 1.1, contrast: 1.05, lift: [0.0, 0.0, 0.02], gain: [1.0, 1.0, 1.0], vig: 0.18 },
+  // ディスク画面：モンスターをくっきり（にじみ弱め・周辺を暗くしない）
+  disc: { strength: 0.3, threshold: 0.98, knee: 0.25, sat: 1.06, contrast: 1.05, lift: [0.0, 0.0, 0.0], gain: [1.0, 1.0, 1.0], vig: 0.0 },
   sakura: { strength: 0.6, threshold: 0.95, knee: 0.3, sat: 1.1, contrast: 1.05, lift: [0.0, 0.005, 0.025], gain: [1.0, 1.0, 1.0], vig: 0.2 },
   campus: { strength: 0.7, threshold: 0.93, knee: 0.32, sat: 1.07, contrast: 1.08, lift: [0.02, 0.0, 0.035], gain: [1.03, 0.99, 0.95], vig: 0.26 },
 };

@@ -393,9 +393,12 @@ export class Puncher {
     if (!stunned && this.state !== 'uturn') {
       let yr = I.stickX * MOVE.yawRate;
       let pr = I.stickY * MOVE.pitchRate;
+      // 右の親指（両手の操作）：なぞった分だけそのまま向きが変わる（ラジアン）
+      let lx = I.lookX || 0, ly = I.lookY || 0;
       if (this.charge) {
         yr = 0;
         pr = 0; // ディスク発動中は向きを変えられない
+        lx = ly = 0;
       }
       // 飛んでいるときは少しゆっくり大回り
       if (this.state === 'fly' || this.state === 'cruise' || this.state === 'dash') {
@@ -403,20 +406,22 @@ export class Puncher {
         pr *= 0.85;
       }
       // スティック右（指を右へ）＝画面で右へ曲がる。yaw は左回りがプラスなので引く
-      this.yaw = wrapAngle(this.yaw - yr * dt);
-      this.pitch = clamp(this.pitch + pr * dt, -MOVE.pitchLimit, MOVE.pitchLimit);
+      this.yaw = wrapAngle(this.yaw - yr * dt - lx);
+      this.pitch = clamp(this.pitch + pr * dt + ly, -MOVE.pitchLimit, MOVE.pitchLimit);
       // ロックオン：相手のほうへ自動で向く
       const L = this.lock;
       if (L && L.alive && !this.charge) {
         _v.subVectors(L.pos, this.pos);
         const ty = Math.atan2(_v.x, _v.z);
         const tp = Math.atan2(_v.y, Math.hypot(_v.x, _v.z));
-        const k = Math.abs(I.stickX) + Math.abs(I.stickY) > 0.4 ? 2.5 : 7;
+        const steer = Math.abs(I.stickX) + Math.abs(I.stickY) > 0.4 || Math.abs(lx) + Math.abs(ly) > 0.002;
+        const k = steer ? 2.5 : 7;
         this.yaw = angleDamp(this.yaw, ty, k, dt);
         this.pitch = clamp(damp(this.pitch, tp, k, dt), -MOVE.pitchLimit, MOVE.pitchLimit);
       }
-      // turnVis は「左へ曲がる＝プラス」（体のかたむき用）
-      this.turnVis = damp(this.turnVis, -I.stickX, 6, dt);
+      // turnVis は「左へ曲がる＝プラス」（体のかたむき用）。右の親指で曲がったときも体をかたむける
+      const lookRate = dt > 0 ? clamp(lx / dt / MOVE.yawRate, -1, 1) : 0;
+      this.turnVis = damp(this.turnVis, -clamp(I.stickX + lookRate, -1, 1), 6, dt);
     } else {
       this.turnVis = damp(this.turnVis, 0, 6, dt);
     }

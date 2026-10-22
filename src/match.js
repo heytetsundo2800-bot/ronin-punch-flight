@@ -400,12 +400,17 @@ export class Match {
         I.hold = this.input.hold;
         I.stickX = this.input.stickX;
         I.stickY = this.input.stickY;
+        I.lookX = this.input.lookX;
+        I.lookY = this.input.lookY;
+        I.lookActive = this.input.looking();
         for (const e of this.input.events) I.events.push(e);
         this.input.events.length = 0;
         for (const p of this.punchers) if (p.brain) p.brain.update(dt);
       } else {
         P.intent.hold = false;
         P.intent.stickX = P.intent.stickY = 0;
+        P.intent.lookX = P.intent.lookY = 0;
+        P.intent.lookActive = false;
         P.intent.events.length = 0;
         for (const p of this.punchers) {
           if (p.brain) {

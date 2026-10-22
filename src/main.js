@@ -36,7 +36,7 @@ class App {
     window.addEventListener('unhandledrejection', (e) => pushErr('promise: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)));
     this.root = $('#app');
     this.save = loadSave();
-    this.settings = Object.assign({ sens: 1, invertX: false, invertY: false, tapSkill: true, quality: 'auto', hand: 'right' }, store.get('rpf_settings', {}));
+    this.settings = Object.assign({ sens: 1, lookSens: 1, scheme: 'two', invertX: false, invertY: false, tapSkill: true, quality: 'auto', hand: 'right', guideN: 0 }, store.get('rpf_settings', {}));
     this.screenEl = $('#screens');
     this.hudRoot = $('#hud');
     this.fxLayer = $('#fx');
@@ -143,6 +143,8 @@ class App {
   }
   applySettings() {
     this.input.sens = this.settings.sens;
+    this.input.lookSens = this.settings.lookSens || 1;
+    this.input.scheme = this.settings.scheme === 'one' ? 'one' : 'two';
     this.input.invertY = this.settings.invertY;
     this.input.invertX = !!this.settings.invertX;
     store.set('rpf_settings', this.settings);
@@ -205,7 +207,7 @@ class App {
     } else if (this.lobby) {
       this.updateLobby(dt);
       if (!this.noRender) {
-        this.post.setGrade(GRADES.lobby);
+        this.post.setGrade(this.lobby.view === 'disc' ? GRADES.disc : GRADES.lobby);
         this.post.render(this.lobby.scene, this.lobby.cam);
       }
     }
@@ -322,6 +324,70 @@ class App {
     L.emote = name || pick[Math.floor(Math.random() * pick.length)];
     L.emoteT = L.emoteDur = 1.6;
   }
+  // ディスクの画面：モンスターを見せる窓の上下（画面の px）。見出しの下〜モンスター名の上。0.5秒ごとに測りなおす
+  discWindow(dt) {
+    const L = this.lobby;
+    L.dwT = (L.dwT || 0) - dt;
+    if (!L.dw || L.dwT <= 0) {
+      L.dwT = 0.5;
+      const H = this.viewH;
+      let top = H * 0.07, bot = H * 0.27;
+      const scr = document.querySelector('.screen.discsel');
+      const hd = scr && scr.querySelector('.hdr'), st = scr && scr.querySelector('.discstage'), inf = scr && scr.querySelector('.dsinfo');
+      if (hd && st) {
+        const rh = hd.getBoundingClientRect(), rs = st.getBoundingClientRect();
+        const ri = inf ? inf.getBoundingClientRect() : null;
+        top = rh.bottom + 4;
+        bot = ri && ri.height > 10 ? ri.top - 2 : rs.bottom - 74;
+      }
+      L.dw = { top, bot: Math.max(bot, top + 60) };
+    }
+    return L.dw;
+  }
+  // 溜め→技→休む の1周で、いちばん大きく動いたときの大きさ（ディスク画面の窓からはみ出さないように）
+  // 翼を広げる・のびあがるなど、ポーズで形が変わるので、1周を12回に分けて頂点で測る（光る板などの効果はのぞく）
+  monFit(m) {
+    const L = this.lobby, U = m.userData;
+    const v = new THREE.Vector3();
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    const shown = (o) => {
+      for (let q = o; q && q !== m; q = q.parent) if (!q.visible) return false;
+      return true;
+    };
+    for (let i = 0; i < 12; i++) {
+      const T = (i / 12) * 3.2;
+      const ph = T < 1.1 ? 'charge' : T < 1.9 ? 'act' : 'idle';
+      const kk = ph === 'charge' ? T / 1.1 : ph === 'act' ? (T - 1.1) / 0.8 : 0;
+      poseMonster(m, ph, kk, T);
+      for (const turn of [0.42, 0.7, 0.98]) {
+        m.rotation.set(U.tilt || 0, turn, 0);
+        const pu = (U.push || 0) * 0.25;
+        m.position.set(Math.sin(turn) * pu, -L.monCy * L.monBase + ((U.lift || 0) - (U.dive || 0)) * 0.6, Math.cos(turn) * pu);
+        m.scale.setScalar(L.monBase * (ph === 'act' ? 1.05 : 1));
+        m.updateMatrixWorld(true);
+        m.traverse((o) => {
+          if (!o.isMesh || o.name === 'outline' || !o.geometry || !shown(o)) return;
+          const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+          if (mat && (mat.blending === THREE.AdditiveBlending || (mat.transparent && mat.opacity < 0.35))) return;
+          const pa = o.geometry.attributes.position;
+          const step = Math.max(1, Math.floor(pa.count / 160));
+          for (let j = 0; j < pa.count; j += step) {
+            v.fromBufferAttribute(pa, j).applyMatrix4(o.matrixWorld);
+            if (v.x < x0) x0 = v.x;
+            if (v.x > x1) x1 = v.x;
+            if (v.y < y0) y0 = v.y;
+            if (v.y > y1) y1 = v.y;
+            if (v.z < z0) z0 = v.z;
+            if (v.z > z1) z1 = v.z;
+          }
+        });
+      }
+    }
+    m.scale.setScalar(L.monBase);
+    if (!(x1 > x0)) return null;
+    // cy：ふつうの置き場所（高さ0.7）から、形のまん中がどれだけずれるか
+    return { w: x1 - x0, h: y1 - y0, d: z1 - z0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+  }
   // ディスクの画面：モンスターが技を見せる（溜め→技→休む をくり返す）
   setLobbyMon(monId, discId) {
     const L = this.lobby;
@@ -345,6 +411,7 @@ class App {
     const k = 2.3 / Math.max(sz.x, sz.y, sz.z, 0.5);
     L.monCy = c.y / m.scale.x; // 大きさをかける前の、まん中の高さ
     L.monBase = m.scale.x * k;
+    L.monFit = this.monFit(m); // 窓に入るようにカメラの距離を決めるのに使う
     m.scale.setScalar(L.monBase);
     L.scene.add(m);
     L.mon = m;
@@ -364,6 +431,10 @@ class App {
     const disc = L.view === 'disc' && L.mon;
     if (L.model) L.model.visible = !disc;
     if (L.mon) L.mon.visible = !!disc;
+    // ディスク画面：モンスターのうしろをすっきり（奥の島・木・花びら・足場の島をかくす＝青い空だけ）
+    if (this.lobbyArt && this.lobbyArt.far) this.lobbyArt.far.visible = !disc;
+    if (this.lobbyArt && this.lobbyArt.ground) for (const g of this.lobbyArt.ground) g.visible = !disc;
+    for (const p of L.petals) p.visible = !disc;
     if (disc) {
       // 3秒ごとに：溜め（1秒）→ 技（0.8秒）→ 休む
       L.monT += dt;
@@ -439,22 +510,38 @@ class App {
       dist = portrait ? 9.2 : 5.5;
       ox = portrait ? 0 : 1.2;
       ly = portrait ? -0.5 : 0.2;
-    } else if (L.view === 'disc') {
-      // ディスク：上の窓にモンスター
-      dist = portrait ? 9.5 + (0.5 - Math.min(0.5, asp)) * 8 : 12;
-      ox = 0;
-      ly = portrait ? -1.6 : -2.1;
+    }
+    let camY = 0.85;
+    if (L.view === 'disc') {
+      // ディスク：上の窓（見出しの下〜モンスター名の上）のまん中に、はみ出さない大きさでモンスター
+      const R = this.discWindow(dt);
+      const H = this.viewH, W = this.viewW;
+      const tf = Math.tan((L.cam.fov * Math.PI) / 360);
+      const F = L.monFit || { w: 2.3, h: 1.3, d: 1.2, cy: 0 };
+      const hpx = Math.max(60, R.bot - R.top);
+      const E = 0.3; // モンスターを見上げる角度（約17度）。カメラをモンスターより下に置く＝うしろは地平線の白っぽい所ではなく、青い空
+      // 見上げているので、奥行きも少し高さに見える
+      const hp = F.h * Math.cos(E) + F.d * Math.sin(E);
+      // 高さと横はばの両方が窓に入る距離（1周のポーズでいちばん大きいとき）
+      dist = Math.max(6, (hp * H) / (0.92 * hpx * 2 * tf), F.w / (0.86 * 2 * tf * (W / H)));
+      ox = F.cx || 0;
+      // 画面のまん中から窓のまん中までの角度（上がプラス）
+      const a = Math.atan((0.5 - (R.top + R.bot) / 2 / H) * 2 * tf);
+      camY = 0.7 + F.cy - dist * Math.tan(E);
+      ly = camY + dist * Math.tan(E - a);
     }
     if (L.debugCam) {
       // 見た目の点検用（テストのスクリプトから）
       dist = L.debugCam.dist;
       ox = L.debugCam.ox;
       ly = L.debugCam.ly;
+      if (L.debugCam.camY != null) camY = L.debugCam.camY;
     }
     L.cx = damp(L.cx == null ? ox : L.cx, ox, 5, dt);
     L.cd = damp(L.cd == null ? dist : L.cd, dist, 5, dt);
     L.cy = damp(L.cy == null ? ly : L.cy, ly, 5, dt);
-    L.cam.position.set(L.cx + 0.25, 0.85 + Math.sin(L.t * 0.5) * 0.05, L.cd);
+    L.ch = damp(L.ch == null ? camY : L.ch, camY, 5, dt);
+    L.cam.position.set(L.cx + 0.25, L.ch + Math.sin(L.t * 0.5) * 0.05, L.cd);
     L.cam.lookAt(L.cx, L.cy, 0);
     for (const p of L.petals) {
       const w = p.userData.w;
@@ -1236,7 +1323,10 @@ class App {
       `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>せってい</h2></div>
        <div class="card">
          <div class="toggle"><span>ニックネーム：<b class="nm"></b></span><button class="btn small k rename">変える</button></div>
-         <div class="field"><span>旋回の速さ <b class="sv"></b></span><input type="range" min="0.5" max="1.6" step="0.05" class="sens"></div>
+         <div class="toggle"><span>操作のしかた</span><div class="seg sch" style="margin:0;width:180px;background:rgba(255,255,255,0.1)"><button data-s="two">両手</button><button data-s="one">片手</button></div></div>
+         <p class="note schnote" style="margin:-4px 0 8px"></p>
+         <div class="field lookf"><span>視点の速さ（右の親指） <b class="lv"></b></span><input type="range" min="0.5" max="2" step="0.05" class="lsens"></div>
+         <div class="field"><span>旋回の速さ（スライド） <b class="sv"></b></span><input type="range" min="0.5" max="1.6" step="0.05" class="sens"></div>
          <label class="toggle"><span>左右の操作を反対にする</span><input type="checkbox" class="invx"></label>
          <label class="toggle"><span>上下の操作を反対にする</span><input type="checkbox" class="inv"></label>
          <label class="toggle"><span>スキルをタップでも出す（上フリックでも出る）</span><input type="checkbox" class="tap"></label>
@@ -1265,6 +1355,30 @@ class App {
     sens.oninput = () => {
       st.sens = +sens.value;
       sv.textContent = Math.round(st.sens * 100) + '%';
+      this.applySettings();
+    };
+    // 操作のしかた（両手／片手）
+    const schB = $$('.sch button', s), schNote = $('.schnote', s), lookF = $('.lookf', s);
+    const showSch = () => {
+      const two = st.scheme !== 'one';
+      schB.forEach((b) => b.classList.toggle('on', b.dataset.s === (two ? 'two' : 'one')));
+      schNote.innerHTML = two
+        ? '左の親指：長押しで飛ぶ・スライドで旋回・フリック<br>右の親指：なぞって視点を動かす・タップでブースト'
+        : '画面のどこでも：長押しで飛ぶ・スライドで旋回・フリック・タップ（キックフライトと同じ）';
+      lookF.style.display = two ? '' : 'none';
+    };
+    showSch();
+    schB.forEach((b) => (b.onclick = () => {
+      st.scheme = b.dataset.s;
+      this.applySettings();
+      showSch();
+    }));
+    const lsens = $('.lsens', s), lv = $('.lv', s);
+    lsens.value = st.lookSens || 1;
+    lv.textContent = Math.round((st.lookSens || 1) * 100) + '%';
+    lsens.oninput = () => {
+      st.lookSens = +lsens.value;
+      lv.textContent = Math.round(st.lookSens * 100) + '%';
       this.applySettings();
     };
     const inv = $('.inv', s);
@@ -1359,15 +1473,24 @@ class App {
   }
 
   showHowto() {
+    const two = this.settings.scheme !== 'one';
+    const rows = two
+      ? `<b>左で長押し</b><span>前へ飛ぶ（地面では走る）。離すとその場で止まる</span>
+        <b>右でなぞる</b><span>視点（向き）を動かす。飛びながらでも、止まっていても。飛ぶ方向もこれで決まる</span>
+        <b>左で長押し＋スライド</b><span>スティックでも旋回できる（押した所にスティックが出る）</span>
+        <b>タップ</b><span>ブーストダッシュ（黄色いゲージを1つ使う。左右どちらの親指でも）。そのあとは自動で飛び続ける</span>
+        <b>フリック</b><span>回避・ブレーキ・ターンのフリックは左の親指で（右でなぞると視点になる）</span>`
+      : `<b>長押し</b><span>前へ飛ぶ（地面では走る）。離すとその場で止まる</span>
+        <b>長押し＋スライド</b><span>飛びながら旋回（押した所にスティックが出る）</span>
+        <b>押してすべらせる</b><span>止まったまま向きを変える（指ははなさない。すばやく離すとステップ）</span>
+        <b>タップ</b><span>ブーストダッシュ（黄色いゲージを1つ使う）。そのあとは自動で飛び続ける</span>`;
     const m = el(
       'div',
       'modal howto',
       `<div class="box"><h3>遊び方</h3>
+      <p class="note" style="margin:0 0 8px">いまの操作：<b>${two ? '両手（左で移動・右で視点）' : '片手（どこでも）'}</b>。せっていの「操作のしかた」で変えられる</p>
       <div class="ctrl">
-        <b>長押し</b><span>前へ飛ぶ（地面では走る）。離すとその場で止まる</span>
-        <b>長押し＋スライド</b><span>飛びながら旋回（押した所にスティックが出る）</span>
-        <b>押してすべらせる</b><span>止まったまま向きを変える（指ははなさない。すばやく離すとステップ）</span>
-        <b>タップ</b><span>ブーストダッシュ（黄色いゲージを1つ使う）。そのあとは自動で飛び続ける</span>
+        ${rows}
         <b>横フリック</b><span>止まっているとき：ステップ／飛んでいるとき：バレルロール</span>
         <b>上フリック</b><span>止まっているとき：上へ浮かぶ</span>
         <b>下フリック</b><span>止まっているとき：バックステップ／飛んでいるとき：急ブレーキ</span>

@@ -39,7 +39,8 @@ export class FollowCam {
   }
   update(p, dt, opts = {}) {
     // カメラの向きはキャラの向きを少し遅れて追う
-    const k = opts.snap || this.first ? 1000 : p.lock ? 7 : 6;
+    // 右の親指で視点を動かしているあいだは、指にぴったりついてくる（遅れると酔う・ねらえない）
+    const k = opts.snap || this.first ? 1000 : p.intent && p.intent.lookActive ? 22 : p.lock ? 7 : 6;
     let yawDiff = p.yaw - this.yaw;
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;

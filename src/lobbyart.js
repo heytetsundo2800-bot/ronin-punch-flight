@@ -77,12 +77,13 @@ export function buildLobbyArt(scene) {
   far.frustumCulled = false;
   add(new THREE.Mesh(merged(midG), ART.cloudMaterial(ENV, { ...ENV.cloud, far: false })));
   // 浮島：足場（キャラが立つ）＋奥にいくつか
-  const rockG = [], grassG = [];
-  const isle = (x, top, z, R, depth) => {
-    rockG.push(ART.islandRock(rnd, x, top, z, R, depth));
-    grassG.push(ART.islandGrass(rnd, x, top, z, R));
+  // 足場の島と、奥の島（奥の島と木は、ディスク画面ではかくす＝モンスターのうしろをすっきり）
+  const rockG = [], grassG = [], farRockG = [], farGrassG = [];
+  const isle = (x, top, z, R, depth, far) => {
+    (far ? farRockG : rockG).push(ART.islandRock(rnd, x, top, z, R, depth));
+    (far ? farGrassG : grassG).push(ART.islandGrass(rnd, x, top, z, R));
   };
-  isle(0, LOBBY_GROUND - 0.15, 0, 3.6, 3.4);
+  isle(0, LOBBY_GROUND - 0.15, 0, 3.6, 3.4, false);
   const FAR_ISLES = [
     [-24, -7, -52, 6.5, 6],
     [30, 3, -88, 9, 8],
@@ -91,11 +92,17 @@ export function buildLobbyArt(scene) {
     [8, 20, -190, 16, 14],
     [-12, -20, -30, 3, 3],
   ];
-  for (const [x, y, z, R, d] of FAR_ISLES) isle(x, y, z, R, d);
+  for (const [x, y, z, R, d] of FAR_ISLES) isle(x, y, z, R, d, true);
   const rockM = ART.rockMaterial(ENV, ROCK);
   const grassM = ART.grassMaterial(ENV, GRASS);
-  add(new THREE.Mesh(merged(rockG), rockM));
-  add(new THREE.Mesh(merged(grassG), grassM));
+  // 足場の島（ディスク画面では、下から見上げるのでかくす）
+  out.ground = [add(new THREE.Mesh(merged(rockG), rockM)), add(new THREE.Mesh(merged(grassG), grassM))];
+  const farGroup = new THREE.Group();
+  scene.add(farGroup);
+  out.list.push(farGroup);
+  out.far = farGroup;
+  farGroup.add(new THREE.Mesh(merged(farRockG), rockM));
+  farGroup.add(new THREE.Mesh(merged(farGrassG), grassM));
   // 奥の島にサクラの木（幹＋花のかたまり）
   const trunkG = [], blossomG = [];
   const tree = (x, y, z, s) => {
@@ -118,10 +125,12 @@ export function buildLobbyArt(scene) {
   tree(31, 3.2, -90, 2.0);
   tree(-60, 11.2, -134, 2.6);
   tree(10, 20.2, -192, 3.2);
-  const trunk = add(new THREE.Mesh(merged(trunkG), toon(0x7a4a2c, { shade: 'warm' })));
+  const trunk = new THREE.Mesh(merged(trunkG), toon(0x7a4a2c, { shade: 'warm' }));
   addOutline(trunk, lineColor(0x7a4a2c), 0.05);
-  const bloss = add(new THREE.Mesh(merged(blossomG), toon(0xffb3cd, { shade: 'warm', rim: 0.3, rimColor: 0xfff0f6 })));
+  farGroup.add(trunk);
+  const bloss = new THREE.Mesh(merged(blossomG), toon(0xffb3cd, { shade: 'warm', rim: 0.3, rimColor: 0xfff0f6 }));
   addOutline(bloss, lineColor(0xffb3cd, 0.55), 0.05);
+  farGroup.add(bloss);
   // 足場の島の草むら（足もとの近く。キャラの立つ場所はあける）
   // カメラの手前（+z）には置かない＝画面の下が草でうまらない。小さめに
   const tuftG = [];
@@ -136,6 +145,7 @@ export function buildLobbyArt(scene) {
   }
   const tufts = add(new THREE.Mesh(merged(tuftG), toon(0xffffff, { vertexColors: true, side: THREE.DoubleSide })));
   tufts.material.side = THREE.DoubleSide;
+  out.ground.push(tufts);
   out.update = (t) => {
     if (sea.material.uniforms && sea.material.uniforms.uTime) sea.material.uniforms.uTime.value = t;
   };
