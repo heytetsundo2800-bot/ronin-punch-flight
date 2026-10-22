@@ -50,7 +50,7 @@ async def main():
             await pg.wait_for_selector('.screen.home', timeout=15000)
         if 'hud' in WANT or 'result' in WANT:
             await pg.click('.battlebtn', force=True)
-            await pg.wait_for_function('window.__app.match && window.__app.match.phase === "play"', timeout=40000)
+            await pg.wait_for_function('window.__app.match && window.__app.match.phase === "play"', timeout=120000)
             await pg.wait_for_timeout(1500)
             await pg.screenshot(path=f'{OUT}/hud.png')
             # 試合の中ほど：ロックオン・ダメージ・スキル

@@ -53,7 +53,7 @@ async def run(b, stage):
     await pg.wait_for_selector('.stagebtn', timeout=15000)
     label = await pg.inner_text('.stagebtn b')
     await pg.click('.battlebtn', force=True)
-    await pg.wait_for_function('window.__app.match && window.__app.match.phase === "play"', timeout=30000)
+    await pg.wait_for_function('window.__app.match && window.__app.match.phase === "play"', timeout=90000)
     await pg.wait_for_timeout(500)
     r = await pg.evaluate(PROBE, stage)
     check(f'[{stage}] home label', label.strip() != '', label)

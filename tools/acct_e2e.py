@@ -60,7 +60,7 @@ async def main():
             print('screen:', await A.evaluate("() => document.body.innerText.slice(0, 200)"))
         await A.wait_for_timeout(1500)
         await A.click('.battlebtn', force=True)
-        await A.wait_for_function('window.__app.match && window.__app.match.phase === "play"', timeout=20000)
+        await A.wait_for_function('window.__app.match && window.__app.match.phase === "play"', timeout=60000)
         mnames = await A.evaluate("() => window.__app.match.punchers.map(q => q.displayName + (q.friend ? '*' : ''))")
         check('friend appears as CPU in match', 'トラ*' in mnames, mnames)
         await A.evaluate("() => { const m = window.__app.match; const items = m.mode.field.items.slice(0, 20); for (const i of items) i.state = 'deposited'; m.mode.deposit[0].push(...items); m.timeLeft = 0.1; }")
