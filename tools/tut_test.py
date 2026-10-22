@@ -41,11 +41,19 @@ async def main():
         await pg.evaluate('() => { const I = window.__app.input; I.sample = I._s; }')
         log.append(await step())
         await pg.wait_for_timeout(900)
-        # 3 look 180 deg (stick without hold)
+        # 3 look 180 deg（両手：右の親指でなぞる。飛びながらでも数える）
+        st3 = await step()
+        print('look step text:', st3['msg'])
+        print('look step says right thumb:', '右の親指' in st3['msg'])
+        hand = await pg.evaluate('() => { const h = document.querySelector(".handhint"); return h ? {k: h.dataset.k, x: parseFloat(h.style.left), hidden: h.classList.contains("hidden"), w: innerWidth} : null; }')
+        print('look step hand on right half:', bool(hand) and hand['x'] > hand['w'] / 2, hand)
         await put(0, 50, -40)
-        await pg.evaluate('() => { const I = window.__app.input; I._s = I.sample; I.sample = function(){ this._s(); this.hold = false; this.stickX = 1; }; }')
-        await pg.wait_for_timeout(2200)
-        await pg.evaluate('() => { const I = window.__app.input; I.sample = I._s; }')
+        await pg.evaluate('() => { const I = window.__app.input; I._s = I.sample; I._lk = I.looking; I.looking = () => true; I.sample = function(){ this._s(); this.hold = true; this.lookX = 0.06; }; }')
+        try:
+            await pg.wait_for_function('window.__app.match.step >= 3', timeout=9000)
+        except Exception:
+            print('look step did not finish in 9s')
+        await pg.evaluate('() => { const I = window.__app.input; I.sample = I._s; I.looking = I._lk; }')
         log.append(await step())
         await pg.wait_for_timeout(900)
         # 4 brake x2 (dash then down flick)

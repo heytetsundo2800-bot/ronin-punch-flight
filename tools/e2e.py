@@ -43,10 +43,11 @@ async def main():
         cdp = await ctx.new_cdp_session(pg)
         async def touch(t, pts):
             await cdp.send('Input.dispatchTouchEvent', {'type': t, 'touchPoints': [{'x': x, 'y': y, 'id': i} for i, (x, y) in enumerate(pts)]})
-        await touch('touchStart', [(196, 520)])
+        # 両手の操作：左の親指で長押し（画面の左半分）
+        await touch('touchStart', [(110, 520)])
         for i in range(30):
             await pg.wait_for_timeout(60)
-            await touch('touchMove', [(196 + min(i, 15) * 2, 520)])
+            await touch('touchMove', [(110 + min(i, 15) * 2, 520)])
         await pg.screenshot(path=f'{OUT}/07_fly.png')
         await touch('touchEnd', [])
         # タップでブースト
