@@ -1,15 +1,16 @@
-# ディスク（モンスターの技）の点検
-#  1) 14枚すべて：使う → モンスターが横に出る → 技を出す → 消える（あとに残らない）
+# ディスクの点検（v1.5：21枚。先生・学食・犬など）
+#  1) 21枚すべて：使う → 横に出る → 技を出す → 消える（あとに残らない）
 #  2) 攻撃のディスクの弾は、モンスターの口のあたりから出る
 #  3) 溜め中に強い攻撃を受けると、モンスターが割れて消える
-#  4) ディスクの画面：14枚のカードとモンスターの絵が出る
+#  4) ディスクの画面：21枚のカードと絵が出る
 # 使い方：public を 8812 で配信してから python3 tools/disc_test.py
 import asyncio
 import sys
 from playwright.async_api import async_playwright
 
 URL = 'http://localhost:8812/?norender=1'
-IDS = ['akahon', 'tangocho', 'pencil', 'drink', 'eyemask', 'hachimaki', 'coffee', 'shield', 'keshigomu', 'marksheet', 'warp', 'homewarp', 'jet', 'fuwa']
+IDS = ['akahon', 'tangocho', 'pencil', 'cookie', 'drink', 'eyemask', 'eki', 'mameta', 'ramen', 'hachimaki', 'coffee', 'shield', 'keshigomu', 'marksheet', 'tani', 'warp', 'homewarp', 'jet', 'fuwa', 'screw', 'book']
+SHOTS = ('akahon', 'tangocho', 'pencil', 'cookie')
 results = []
 
 
@@ -38,15 +39,20 @@ async def main():
         await pg.click('.tabs button[data-t="om"]')
         await pg.wait_for_selector('.discsel .omgrid .omcard', timeout=15000)
         n = await pg.evaluate("() => document.querySelectorAll('.omgrid .omcard').length")
+        # 絵は1フレームに少しずつ作るので、全部そろうまで待つ
+        try:
+            await pg.wait_for_function("() => [...document.querySelectorAll('.omgrid .omcard img')].every(i => i.src.startsWith('data:image/png'))", timeout=30000)
+        except Exception:
+            pass
         imgs = await pg.evaluate("() => [...document.querySelectorAll('.omgrid .omcard img')].filter(i => i.src.startsWith('data:image/png') && i.src.length > 2000).length")
-        check('disc screen: 14 cards', n == 14, n)
-        check('disc screen: monster pictures', imgs == 14, imgs)
+        check('disc screen: 21 cards', n == len(IDS), n)
+        check('disc screen: pictures', imgs == len(IDS), imgs)
         mon = await pg.evaluate("() => { const L = window.__app.lobby; return L.view + ':' + (L.mon ? L.mon.userData.id : 'none') + ':' + (L.mon && L.mon.visible); }")
         check('disc screen: 3D monster preview', mon.startswith('disc:') and mon.endswith(':true'), mon)
         await pg.click('.omgrid .omcard[data-id="marksheet"]')
         await pg.wait_for_timeout(300)
         mon2 = await pg.evaluate("() => window.__app.lobby.monId")
-        check('disc screen: tapping a card shows that monster', mon2 == 'octopus', mon2)
+        check('disc screen: tapping a card shows that model', mon2 == 'shusseki', mon2)
         await pg.click('.back')
         await pg.wait_for_selector('.screen.home', timeout=15000)
         vis = await pg.evaluate("() => window.__app.lobby.model.visible")
@@ -83,7 +89,7 @@ async def main():
             check(f'{id}: used', ok)
             check(f'{id}: monster appears', s1 != '', s1)
             check(f'{id}: monster acts', got.get('act'))
-            if id in ('akahon', 'tangocho', 'pencil'):
+            if id in SHOTS:
                 check(f'{id}: shot starts at the monster', 0 <= got.get('d', -1) < 3.5, round(got.get('d', -1), 2))
             check(f'{id}: monster goes away', left == 0, left)
         # ---- 次のモンスターに替わるとき：前のモンスターは消える動きを最後まで見せる ----
@@ -93,8 +99,8 @@ async def main():
         sw = await pg.evaluate("""() => { const m = window.__app.match, P = m.player; const old = m.fx.summons.get(P);
           P.charge = null; m.fx.summonAct(P, 'drink'); const now = m.fx.summons.get(P);
           return { old: old ? old.g.userData.id : '', now: now ? now.g.userData.id : '', leaving: m.fx.leaving.length, oldInScene: !!(old && old.g.parent), oldPhase: old ? old.phase : '' }; }""")
-        check('switch: new monster comes out', sw['now'] == 'jelly', sw)
-        check('switch: old monster plays its exit', sw['old'] == 'drake' and sw['leaving'] == 1 and sw['oldInScene'] and sw['oldPhase'] == 'leave', sw)
+        check('switch: new model comes out', sw['now'] == 'obachan', sw)
+        check('switch: old model plays its exit', sw['old'] == 'rocker' and sw['leaving'] == 1 and sw['oldInScene'] and sw['oldPhase'] == 'leave', sw)
         await wg(0.6)
         lv = await pg.evaluate("() => window.__app.match.fx.leaving.length")
         check('switch: old monster is gone after its exit', lv == 0, lv)

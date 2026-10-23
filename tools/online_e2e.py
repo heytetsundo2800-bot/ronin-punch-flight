@@ -138,7 +138,7 @@ async def main():
             if r.startswith('act'):
                 acted = True
                 break
-        check('guest sees the host summon a monster', bool(seen) and seen.endswith('drake'), seen)
+        check('guest sees the host summon a disc', bool(seen) and seen.endswith('rocker'), seen)
         check('guest sees the monster attack', acted)
         # その弾（ホストの弾）がゲストの画面に見える
         hshot = None
