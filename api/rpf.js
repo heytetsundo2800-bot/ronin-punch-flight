@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const NAME_MAX = 10; // 名前の長さ（コードポイントで数える）
 const SAVE_MAX = 20000; // 預けるセーブデータの文字数
 const BODY_MAX = 64 * 1024; // リクエストの大きさ
-const CHARS = ['tora', 'even', 'aomachi']; // キャラ
+const CHARS = ['tora', 'even', 'aomachi', 'tetsundo', 'naot', 'toriki', 'koudai', 'mana', 'shouta', 'ayana', 'hayata', 'takanobu', 'kouta', 'masashi', 'kousei', 'chijiwa', 'minori', 'yuka']; // キャラ（v1.5 で18人）
 // NGワード（クライアントと同じ。大文字小文字と空白は無視して、ふくまれていたらだめ）
 const NG = ['死ね', 'しね', '殺す', 'ころす', 'ちんこ', 'まんこ', 'うんこ', 'セックス', 'fuck', 'shit', 'bitch', 'nigger', 'admin', '運営'];
 const NG_N = NG.map((w) => w.normalize('NFKC').toLowerCase());
