@@ -1,6 +1,6 @@
 {
   "name": "ronin-punch-flight",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "private": true,
   "description": "浪人パンチフライト：4対4の360°空中バトル（スマホのブラウザで遊べる）",
   "scripts": {
