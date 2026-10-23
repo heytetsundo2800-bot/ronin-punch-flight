@@ -5,6 +5,7 @@ import { OMAMORI, KIND_COLOR, RARE_COLOR } from './characters.js';
 import { BOOST_SEGS, SP_SEGS } from './entity.js';
 import { el, fmtTime, clamp, TAU, isIOS } from './util.js';
 import { ICON } from './icons.js';
+import { revealed } from './kits.js';
 
 // iPhone（iOS 18 以降）は、スイッチの切りかえで本体がブルッとする。透明なスイッチをボタンに重ねる
 function addHaptic(btn) {
@@ -30,6 +31,8 @@ export class Hud {
     this.portraits = portraits;
     root.innerHTML = '';
     root.className = 'hud';
+    // 自分のチームの色（HUDの「自分のもの」をこの色にする。前は自分のHPがいつも青で、赤チームでも青チームに見えた）
+    if (match.player) root.classList.add('my' + match.player.team);
     // 頭の上の名前とHP
     this.tagLayer = el('div', 'tags');
     root.appendChild(this.tagLayer);
@@ -138,6 +141,9 @@ export class Hud {
     // お知らせ
     this.banner = el('div', 'banner hidden');
     root.appendChild(this.banner);
+    // 相性のお知らせ（試合のはじめ）
+    this.synFeed = el('div', 'synfeed');
+    root.appendChild(this.synFeed);
     this.alert = el('div', 'alertbox hidden', 'ダルマがピンチ！');
     root.appendChild(this.alert);
     // 倒されたとき
@@ -178,6 +184,14 @@ export class Hud {
     const row = el('div', 'mem t' + p.team + (p === me ? ' me' : ''));
     row.innerHTML = `<div class="face"><img alt=""><b class="x">${ICON.close}</b></div><div class="info"><div class="hp"><i></i></div><div class="carry"><span>0</span></div></div>`;
     row.querySelector('img').src = this.portraits.get(p.def.id, p.team);
+    // 相性のしるし（ハート＝強くなっている、われたハート＝敵どうしで弱くなっている）
+    const tags = (p.syn && p.syn.tags) || [];
+    if (tags.length) {
+      const bad = tags.every((t) => t.includes('敵どうし'));
+      const b = el('b', 'synb' + (bad ? ' bad' : ''), bad ? '💔' : tags.includes('町田') ? '町' : '♥');
+      b.title = tags.join('・');
+      row.appendChild(b);
+    }
     this.cols[side].appendChild(row);
     this.rows.set(p, { row, hp: row.querySelector('.hp i'), carry: row.querySelector('.carry span'), carryBox: row.querySelector('.carry'), last: '' });
   }
@@ -213,6 +227,14 @@ export class Hud {
     clearTimeout(this._at);
     this._at = setTimeout(() => this.alert.classList.add('hidden'), 1400);
   }
+  // 相性のお知らせを1行ずつ出す（4秒で消える）
+  toastSyn(text, team, bad) {
+    const line = el('div', 'syn t' + (team === 0 || team === 1 ? team : 'x') + (bad ? ' bad' : ''));
+    line.textContent = text;
+    this.synFeed.appendChild(line);
+    while (this.synFeed.children.length > 3) this.synFeed.firstChild.remove();
+    setTimeout(() => line.remove(), 4200);
+  }
 
   // 両手の操作の案内（左＝長押しで飛ぶ／右＝なぞって視点）。はじめの数試合だけ、カウントダウン中〜GOの少しあとまで出す
   updateGuide(dt) {
@@ -227,7 +249,7 @@ export class Hud {
       this.guide = el(
         'div',
         'twoguide',
-        `<div class="g l"><i class="hand hold">${ICON.touch}</i><b>左の親指</b><span>長押しで飛ぶ<br>スライドで旋回<br>フリックで回避</span></div>` +
+        `<div class="g l"><i class="hand hold">${ICON.touch}</i><b>左の親指</b><span>長押しでアクセル<br>はなすと止まる<br>フリックで回避</span></div>` +
           `<div class="g r"><i class="hand swipe">${ICON.touch}</i><b>右の親指</b><span>なぞって視点<br>タップでブースト</span></div>`
       );
       this.root.appendChild(this.guide);
@@ -440,10 +462,16 @@ export class Hud {
       const saying = t.sayT > 0;
       let show = p.alive && (p !== me || saying);
       let x = 0, y = 0;
+      // ちじわの鼻・あやなの情報収集：見つかった敵は、遠くても名前とHPが見える
+      const rev = p.team !== me.team && p.alive && this.frame % 2 === 0 ? revealed(M, me.team, p) : t.rev;
+      if (rev !== t.rev) {
+        t.rev = rev;
+        t.e.classList.toggle('rev', !!rev);
+      }
       if (show) {
         _v.copy(p.pos);
         _v.y += 1.7 * (p.model.scale.x || 1);
-        const far = _v.distanceTo(cam.position) > 46;
+        const far = _v.distanceTo(cam.position) > (rev ? 150 : 46);
         if (far && !saying) show = false;
         _v.project(cam);
         if (_v.z > 1 || Math.abs(_v.x) > 1.15 || Math.abs(_v.y) > 1.15) show = false;

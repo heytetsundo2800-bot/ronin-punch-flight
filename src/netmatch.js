@@ -10,7 +10,8 @@ import { OMAMORI } from './characters.js';
 import { MOVE, RESPAWN_TIME, TEAM } from './config.js';
 import { sound } from './audio.js';
 import { clamp, angleDamp, lerp, damp, wrapAngle } from './util.js';
-import { Writer, Reader, ser, deser, refOf, fromRef, STATES, stateNo, ELEMS, PHASES, PROJ_KINDS, MSG_SNAP, MSG_ME, omIndex, omFromIndex } from './netproto.js';
+import { Writer, Reader, ser, deser, refOf, fromRef, STATES, stateNo, ELEMS, PHASES, PROJ_KINDS, AREA_KINDS, MSG_SNAP, MSG_ME, omIndex, omFromIndex } from './netproto.js';
+import { clientKit, clientSpecial } from './kits.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -22,14 +23,18 @@ const INTERP = 0.11; // ほかの人を何秒おくれて表示するか（な�
 const READY_WAIT = 12; // みんなの準備を待つ最長（秒）
 
 // 記録して、みんなの画面でも同じように見せるもの
-const FX_REC = new Set(['hit', 'healNum', 'miss', 'shieldHit', 'shock', 'boom', 'puff', 'pickup', 'scatter', 'deposit', 'wallKick', 'flash', 'dizzy', 'hearts', 'sparkle', 'laughs', 'healFx', 'buffFx', 'warpFx', 'elemSwitch', 'chargeIcon', 'chargeBreak', 'skillName', 'summonAct']);
+const FX_REC = new Set(['hit', 'healNum', 'miss', 'shieldHit', 'shock', 'boom', 'puff', 'pickup', 'scatter', 'deposit', 'wallKick', 'flash', 'dizzy', 'hearts', 'sparkle', 'laughs', 'healFx', 'buffFx', 'warpFx', 'elemSwitch', 'chargeIcon', 'chargeBreak', 'skillName', 'summonAct',
+  // v1.5 の仲間の技（kits.js）
+  'say', 'notes', 'zzz', 'breath', 'beam', 'tornado', 'stink', 'bike', 'drums', 'phoneRing', 'kick', 'donuts', 'confetti', 'ring']);
 const REPLAY = new Set(['koFeedback', 'respawnFeedback', 'justFeedback', 'hitFeedback', 'announce', 'alertGuardian', 'cutin', 'sfx', 'shake']);
 // 本人の端末ではすでに出しているので、もう一度は出さないもの
-const SELF_SKIP = new Set(['sfx:charge', 'fx.chargeIcon', 'fx.summonAct', 'sfx:elem', 'fx.elemSwitch', 'sfx:shot']);
+const SELF_SKIP = new Set(['sfx:charge', 'fx.chargeIcon', 'fx.summonAct', 'sfx:elem', 'fx.elemSwitch', 'sfx:shot', 'fx.bike']);
 // ホストの本人にだけ出る音（ほかの人の画面では出さない）
 const PERSONAL_SFX = new Set(['lock', 'land', 'spReady', 'respawn']);
 
 const nowS = () => performance.now() / 1000;
+// ほかの人の「動く技」のあいだに出す光のすじ（自分の端末で計算していない人用）
+const TRAIL_COLOR = { goggleDive: 0x7af0ff, bikeDash: 0x7dff9a, flyKick: 0xff6a3a, desires: 0xffb0e0 };
 
 // 動きの変わり目の音（ほかの人のダッシュ・回避など。自分の端末で計算していない人用）
 function stateSound(M, p, prev) {
@@ -152,6 +157,7 @@ export class HostMatch extends Match {
     if (h.cc) m.cc = h.cc;
     if (h.ul) m.ul = 1;
     if (h.ap) m.ap = 1;
+    if (h.dl) m.dl = h.dl;
     this.room.sendTo(t.peer, m);
   }
 
@@ -237,12 +243,14 @@ export class HostMatch extends Match {
           if (p.buffs.big > 0) this.combat.bigSplash(p, t);
         } else if (a === 'sh') {
           if (d > atk.range + (t.radius || 0.8) + 12) return;
+          p.atk.hitIdx = idx; // 何発目か（エブンの歌声の3発目＝大きな声）
           this.combat.shoot(p, t, atk.dmg[idx]);
         } else {
           if (d > 12) return;
           this.combat.dashHit(p, t);
         }
       } else if (a === 'ks') {
+        if (o.d != null && p.def.skill.id === 'desires') p.desireIdx = clamp(o.d | 0, 0, 2);
         if (this.skills.useKS(p)) {
           p.stats.ks++;
           p.ksCd = p.def.skill.cd;
@@ -307,6 +315,8 @@ export class HostMatch extends Match {
       return;
     }
     p.tickTimers(dt);
+    // 長く止められたら旗を落とす（ホストの端末で動いている人と同じきまり）
+    if (p.carry.flag && p.stunT > 0.3 && this.mode.dropFlag) this.mode.dropFlag(p);
     const s = p.netIn;
     const prev = p.state;
     if (s && s.life === p.life && s.alive) {
@@ -443,7 +453,8 @@ export class HostMatch extends Match {
     for (let i = 0; i < na; i++) {
       const a = ar[i];
       w.u16(a.nid || 0);
-      w.u8(a.kind === 'mine' ? 0 : 1);
+      const ak = AREA_KINDS.indexOf(a.kind);
+      w.u8(ak < 0 ? 1 : ak);
       w.u8(a.team || 0);
       w.vec(a.pos);
       w.u8(a.r * 10);
@@ -491,6 +502,10 @@ function writePuncher(w, p, M) {
   if (B.slowT > 0) b |= 32;
   if (B.regenT > 0) b |= 64;
   w.u8(b);
+  // v1.5：状態のしるし・技の速さ・酔い
+  w.u16(p.status || 0);
+  w.i8((p.modSpd || 0) * 100);
+  w.u8(Math.max(0, p.drunkT || 0) * 20);
   w.u8(Math.max(0, B.big) * 10);
   w.u8(B.spdT > 0 ? B.spd * 100 : 0);
   w.u8(B.spdT * 10);
@@ -535,6 +550,9 @@ function readPuncher(r) {
   o.elem = ELEMS[r.u8()] || 'fire';
   o.sakura = r.u8();
   o.bb = r.u8();
+  o.status = r.u16();
+  o.modSpd = r.i8() / 100;
+  o.drunkT = r.u8() / 20;
   o.big = r.u8() / 10;
   o.spd = r.u8() / 100;
   o.spdT = r.u8() / 10;
@@ -586,8 +604,9 @@ class ClientSkills extends Skills {
   useKS(p) {
     const M = this.match;
     if (p !== M.player) return false;
-    M.act({ a: 'ks' });
     const id = p.def.skill.id;
+    // トリキの三大欲求は、どれを出すかもいっしょに送る（ホストと順番がずれないように）
+    M.act(id === 'desires' ? { a: 'ks', d: (p.desireIdx || 0) % 3 } : { a: 'ks' });
     if (id === 'tigerRush') {
       const t = this.aimDir(p, _v);
       p.state = 'skill';
@@ -599,6 +618,9 @@ class ClientSkills extends Skills {
       p.stateT = 0;
       p.invuln = Math.max(p.invuln, 0.3);
       this.active.push({ p, kind: 'dive', t: 0, dur: 0.5, dir: _v.clone(), hit: new Set() });
+    } else if (clientKit(this, p)) {
+      // v1.5 の仲間：動く技だけ自分の端末ですぐに動かす（チャリはすぐ見せる）
+      if (id === 'bikeDash') M.fx.bike && M.fx.bike(p, 1.05);
     }
     return true;
   }
@@ -608,6 +630,7 @@ class ClientSkills extends Skills {
   fireSpecial(p) {
     p.state = 'hover';
     p.stateT = 0;
+    if (p === this.match.player) clientSpecial(this, p);
   }
   endBig() {}
   endIkemen() {}
@@ -639,6 +662,17 @@ class ClientSkills extends Skills {
       p.invuln = Math.max(p.invuln, 1.2);
     } else if (id === 'coffee') {
       p.boost = Math.min(6, p.boost + 2);
+    } else if (id === 'screw') {
+      p.state = 'skill';
+      p.stateT = 0;
+      p.invuln = Math.max(p.invuln, 0.5);
+      this.active.push({ p, kind: 'screw', t: 0, dur: 0.6, hit: new Set(), local: true });
+    } else if (id === 'book') {
+      p.state = 'skill';
+      p.stateT = 0;
+      p.invuln = Math.max(p.invuln, 0.3);
+      this.aimDir(p, _v);
+      this.active.push({ p, kind: 'book', t: 0, dur: 0.55, dir: _v.clone(), hit: new Set(), local: true });
     }
   }
 }
@@ -768,6 +802,11 @@ export class ClientMatch extends Match {
       P.charge = null;
     }
     if (h.ul) P.lock = null;
+    // 欠席スタンプ：しばらくディスクが使えない
+    if (h.dl) {
+      P.diskLock = Math.max(P.diskLock, +h.dl || 0);
+      P.charge = null;
+    }
     if (h.ap) {
       P.atk.phase = -1;
       P.atk.pending = null;
@@ -843,7 +882,7 @@ export class ClientMatch extends Match {
       }
       const na = r.u8();
       snap.ar = [];
-      for (let i = 0; i < na; i++) snap.ar.push({ id: r.u16(), kind: r.u8() === 0 ? 'mine' : 'field', team: r.u8(), pos: r.vec(new THREE.Vector3()), r: r.u8() / 10 });
+      for (let i = 0; i < na; i++) snap.ar.push({ id: r.u16(), kind: AREA_KINDS[r.u8()] || 'field', team: r.u8(), pos: r.vec(new THREE.Vector3()), r: r.u8() / 10 });
       // 時計あわせ：いちばん早く届いたものに合わせる（ゆっくり新しい値にも寄せる）
       const now = nowS();
       const off = snap.ht - now;
@@ -886,6 +925,9 @@ export class ClientMatch extends Match {
     B.slow = o.slow;
     B.slowT = o.bb & 32 ? o.slowT : 0;
     B.regenT = o.bb & 64 ? 1 : 0;
+    P.status = o.status;
+    P.modSpd = o.modSpd;
+    P.drunkT = o.drunkT;
     if (P.model.userData.glasses) P.model.userData.glasses.visible = !B.ikemen;
     const S = P.stats;
     S.score = o.score;
@@ -919,7 +961,7 @@ export class ClientMatch extends Match {
         const mesh = this.fx.projectileMesh({ kind: o.kind, owner: { team: o.team }, team: o.team, pos: o.pos });
         // t0：はじめて見えた時刻。ほかの人は少し前の姿で表示しているので、その人の弾は、その時刻になるまで見せない
         // 自分の弾（mine）は、自分と同じ「いま」の時刻で表示する（すぐ見える）
-        q = { mesh, pos: o.pos.clone(), vel: o.vel.clone(), ht: snap.ht, t0: snap.ht, mine: o.owner === this.player.netId, spin: o.kind === 'tangocho' ? 18 : 0 };
+        q = { mesh, pos: o.pos.clone(), vel: o.vel.clone(), ht: snap.ht, t0: snap.ht, mine: o.owner === this.player.netId, spin: o.kind === 'tangocho' ? 18 : o.kind === 'cookie' ? 9 : 0 };
         if (mesh) mesh.visible = q.mine;
         this.projs.set(o.id, q);
       }
@@ -1001,6 +1043,8 @@ export class ClientMatch extends Match {
       bf.shield = B.bb & 8 ? 1 : 0;
       bf.spdT = B.bb & 16 ? 1 : 0;
       bf.slowT = B.bb & 32 ? 1 : 0;
+      p.status = B.status;
+      p.drunkT = B.drunkT;
       if (p.model.userData.glasses) p.model.userData.glasses.visible = !bf.ikemen;
       p.charge = B.charge ? { id: B.charge } : null;
       const L = B.lock >= 0 ? this.punchers[B.lock] : null;
@@ -1152,7 +1196,11 @@ export class ClientMatch extends Match {
     this.fx.update(dt, this.camera);
     this.shadows.update(this.punchers);
     // 足もとの光：ダイブ中のほかの人
-    for (const p of this.punchers) if (p !== P && p.alive && p.state === 'skill' && p.def.skill.id === 'goggleDive' && Math.random() < 0.6) this.fx.trail(p, 0x7af0ff);
+    for (const p of this.punchers) {
+      if (!p.alive || p.state !== 'skill' || Math.random() > 0.6) continue;
+      const c = TRAIL_COLOR[p.def.skill.id];
+      if (c && (p !== P || p.def.skill.id !== 'goggleDive')) this.fx.trail(p, c);
+    }
     this.stage.update(dt, this.time, this.camera.position);
     if (this.phase !== 'result') this.hud.update(dt, this.camera);
   }

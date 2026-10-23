@@ -268,6 +268,7 @@ class Sound {
         this.noise(0.45, 0.28 * v, 4000, 600, 2);
         this.tone(600, 0.3, 'sine', 0.1 * v, 2);
         break;
+      case 'flash':
       case 'ksAomachi':
         this.tone(2400, 0.06, 'square', 0.12 * v);
         this.noise(0.25, 0.35 * v, 8000, 3000, 0.5, 0.02, 'highpass');
@@ -327,6 +328,35 @@ class Sound {
         this.noise(0.22, 0.3 * v, 7000, 2500, 3, 0, 'bandpass');
         [3520, 4186, 4699, 5274].forEach((f, i) => this.tone(f, 0.09, 'triangle', 0.05 * v, 0.9, i * 0.025));
         this.tone(220, 0.18, 'square', 0.07 * v, 0.5);
+        break;
+      // ===== v1.5 の仲間の技 =====
+      case 'voice':
+        // エブンの歌声：ゆれる3つの音
+        this.tone(523, 0.32, 'triangle', 0.1 * v, 1.12);
+        this.tone(784, 0.28, 'sine', 0.07 * v, 0.95, 0.05);
+        this.tone(659, 0.3, 'sawtooth', 0.03 * v, 1.05, 0.02);
+        break;
+      case 'drum':
+        // ドン・タン・ドン
+        this.tone(120, 0.14, 'sine', 0.32 * v, 0.4);
+        this.noise(0.12, 0.26 * v, 2200, 900, 0.9, 0.06);
+        this.tone(100, 0.12, 'sine', 0.26 * v, 0.45, 0.12);
+        break;
+      case 'gulp':
+        // ゴクゴク
+        [0, 0.13, 0.26].forEach((at) => this.tone(260, 0.1, 'sine', 0.14 * v, 0.5, at));
+        break;
+      case 'fire':
+        this.noise(0.5, 0.26 * v, 400, 1800, 0.7, 0, 'lowpass');
+        this.noise(0.4, 0.12 * v, 2500, 900, 1.2, 0.05);
+        break;
+      case 'call':
+        // プルルル
+        [0, 0.1, 0.2, 0.3].forEach((at, i) => this.tone(i % 2 ? 1175 : 932, 0.08, 'square', 0.06 * v, 0, at));
+        break;
+      case 'vomit':
+        this.noise(0.6, 0.3 * v, 900, 200, 0.8, 0, 'lowpass');
+        this.tone(180, 0.5, 'sawtooth', 0.07 * v, 0.5);
         break;
       case 'capsule':
         [392, 523, 659, 784, 1046, 1318, 1568].forEach((f, i) => this.tone(f, 0.12, 'square', 0.08 * v, 0, i * 0.05));

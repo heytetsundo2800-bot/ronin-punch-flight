@@ -2,9 +2,10 @@
 // 長押し＝前へ飛ぶ／スライド＝旋回（仮想スティック）／タップ＝ブーストダッシュ
 // フリック＝回避（上＝前、下＝後ろ、左右）／上→下の連続フリック＝180度ターン
 // 操作のしかた（scheme）：
-//  'two'（両手・ふだん）：画面の左半分＝上の操作ぜんぶ（飛ぶ・旋回・タップ・フリック）
+//  'two'（両手・ふだん）：画面の左半分＝アクセルだけ（長押しで飛ぶ・はなすと止まる。タップでブースト、フリックで回避）
+//                        左の指をすべらせても向きは変わらない（スティックなし）
 //                        画面の右半分＝なぞって視点（向き）を直接まわす。タップはブースト
-//  'one'（片手）：画面のどこでも上の操作（キックフライトと同じ）
+//  'one'（片手）：画面のどこでも上の操作（スライドで旋回。キックフライトと同じ）
 import { MOVE } from './config.js';
 import { clamp } from './util.js';
 
@@ -126,8 +127,10 @@ export class Input {
     p.moved = Math.max(p.moved, Math.hypot(dx, dy));
     p.minDy = Math.min(p.minDy, dy);
     p.maxDy = Math.max(p.maxDy, dy);
-    // 押してすぐ指を動かした＝その場で向きを変える（飛ばない）
+    // 押してすぐ指を動かした＝その場で向きを変える（飛ばない）。両手のときは、フリックの始まり（飛ばない）
     if (p.mode === 'pending' && p.moved > 12) p.mode = t - p.t0 < HOLD_DELAY ? 'look' : 'fly';
+    // 両手：左の指はアクセルだけ。すべらせてもスティックは動かない
+    if (p.isMain && this.scheme === 'two') return;
     if (p.isMain) {
       // スティックの中心は指が遠くへ行くとついてくる
       const R = MOVE.stickRadius;
@@ -241,7 +244,6 @@ export class Input {
       const now = this.now();
       const dur = now - p.t0;
       if (p.mode === 'pending' && dur > HOLD_DELAY) p.mode = 'fly';
-      hold = p.mode === 'fly';
       // 指がすばやく動いている（フリックの途中）ときは向きを変えない
       let fast = false;
       if (dur < FLICK_TIME && p.hist.length > 1) {
@@ -249,6 +251,9 @@ export class Input {
         const ddt = Math.max(0.008, now - h[2]);
         fast = Math.hypot(p.x - h[0], p.y - h[1]) / (ddt * 1000) > 0.55;
       }
+      // 両手：押してすぐ指がずれても（フリックではなかったら）、そのまま押していれば飛ぶ
+      if (this.scheme === 'two' && p.mode === 'look' && dur > HOLD_DELAY + 0.12 && !fast) p.mode = 'fly';
+      hold = p.mode === 'fly';
       const R = MOVE.stickRadius;
       let ox = (p.x - p.ax) / R, oy = (p.y - p.ay) / R;
       const d = Math.hypot(ox, oy);
@@ -262,7 +267,11 @@ export class Input {
       }
       sx = fast ? 0 : curve(ox);
       sy = fast ? 0 : curve(-oy);
+      // 両手：左はアクセルだけ（向きは右の親指で変える）
+      if (this.scheme === 'two') sx = sy = 0;
     }
+    // アクセルの目じるし（両手のとき、飛んでいるあいだ光る）
+    if (this.ringEl && this.ringEl.classList) this.ringEl.classList.toggle('on', !!(p && hold && this.scheme === 'two'));
     // キーボード
     const K = this.keys;
     if (K.has('a') || K.has('arrowleft')) sx = -1;
@@ -295,8 +304,11 @@ export class Input {
     if (!this.ringEl) return;
     if (!on) {
       this.ringEl.style.opacity = '0';
+      if (this.ringEl.classList) this.ringEl.classList.remove('on');
       return;
     }
+    // 両手のときはスティックではなく「アクセル」の丸（中の玉は動かない）
+    if (this.ringEl.classList) this.ringEl.classList.toggle('accel', this.scheme === 'two');
     this.ringEl.style.opacity = '1';
     this.ringEl.style.transform = `translate(${x}px, ${y}px)`;
   }

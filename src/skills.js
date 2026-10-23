@@ -4,6 +4,7 @@ import { OMAMORI } from './characters.js';
 import { monsterMouth } from './monsters.js';
 import { MOVE, COMBAT } from './config.js';
 import { clamp } from './util.js';
+import { useKit, fireKit, updateKit, onModEnd, onBigEnd, onDamaged, onKO, kitSkillName, burnOn, slowOn, dropHalf } from './kits.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -15,6 +16,7 @@ const AFFINITY = {
   attack: { ATK: 0.85, TRAP: 1.2 },
   speed: { MOVE: 0.8, WARP: 0.85, HEAL: 1.15 },
   support: { HEAL: 0.75, BUFF: 0.8, ATK: 1.1 },
+  power: { BUFF: 0.8, HEAL: 0.9, MOVE: 1.15 },
 };
 
 export class Skills {
@@ -42,7 +44,7 @@ export class Skills {
   useKS(p) {
     const M = this.match;
     const id = p.def.skill.id;
-    M.fx.skillName && M.fx.skillName(p, p.def.skill.name);
+    M.fx.skillName && M.fx.skillName(p, kitSkillName(p));
     if (id === 'tigerRush') {
       const t = this.aimDir(p, _v);
       p.state = 'skill';
@@ -78,7 +80,8 @@ export class Skills {
       }
       return true;
     }
-    return false;
+    // v1.5 の仲間の技（kits.js）
+    return useKit(this, p);
   }
 
   // ===== スペシャル =====
@@ -136,10 +139,21 @@ export class Skills {
         if (a.team !== p.team || !a.alive) continue;
         if (a.pos.distanceTo(p.pos) < 22) a.heal(a.maxHp * 0.3);
       }
-    }
+    } else fireKit(this, p);
   }
   endBig(p) {
     p.buffs.big = 0;
+    onBigEnd(this, p);
+  }
+  // 技の効き目が切れたとき・ダメージを受けたとき・倒されたとき（kits.js）
+  onModEnd(p, tag) {
+    onModEnd(this, p, tag);
+  }
+  onDamaged(t, src, dmg, opts) {
+    onDamaged(this, t, src, dmg, opts);
+  }
+  onKO(victim, killer) {
+    onKO(this, victim, killer);
   }
   endIkemen(p) {
     p.buffs.ikemen = 0;
@@ -222,13 +236,89 @@ export class Skills {
           homing: t,
           turn: 1.2,
           opts: { kind: 'disk', heavy: true, knock: 10, stun: 0.35 },
+          // 学食カレー：当たるとやけど
+          onHit: (q, tt) => {
+            if (M.combat.damage(q.owner, tt, q.dmg, { ...q.opts, dir: _v2.copy(q.vel).normalize().clone() }) > 0) burnOn(tt, q.owner, 50 * atk, 2.5);
+          },
         });
         M.sfx('missile', p);
+        break;
+      }
+      case 'cookie': {
+        // うんち出る出るクッキー：山なりに投げる。当たるとおなかがゆるくなる
+        const { o, t } = this.mouthAim(p, om, _v);
+        const sp = 30, g = 14;
+        if (t) {
+          // 山なりで届くように、少し上をねらう（落ちる分）
+          const d = t.pos.distanceTo(o);
+          _v.y += (0.5 * g * d) / (sp * sp);
+          _v.normalize();
+        }
+        M.combat.spawnProjectile({
+          owner: p,
+          pos: o,
+          vel: _v.clone().multiplyScalar(sp),
+          dmg: 190 * atk,
+          radius: 0.9,
+          life: 2.4,
+          kind: 'cookie',
+          gravity: g,
+          spin: 9,
+          opts: { kind: 'disk', knock: 5, stun: 0.3 },
+          onHit: (q, tt) => {
+            const d = M.combat.damage(q.owner, tt, q.dmg, { ...q.opts, dir: _v2.copy(q.vel).normalize().clone() });
+            if (d > 0 && !tt.isGuardian && tt.alive) {
+              tt.poopT = Math.max(tt.poopT || 0, 6.5);
+              tt.poopTick = Math.min(tt.poopTick || 0.7, 0.7);
+              tt.poopSrc = q.owner;
+              M.fx.say && M.fx.say(tt, 'ギュルル…', 'poop', 1.4);
+            }
+          },
+        });
+        M.sfx('boomerang', p);
         break;
       }
       case 'drink':
         p.heal(p.maxHp * 0.3);
         M.fx.healFx && M.fx.healFx(p);
+        M.fx.say && M.fx.say(p, 'アイスどうぞ〜', 'heal');
+        M.sfx('heal', p);
+        break;
+      case 'eki': {
+        // 駅で助ける先生：いちばんHPが少ない味方（自分も）を助ける
+        let best = p, bv = p.hp / p.maxHp;
+        for (const a of M.punchers) {
+          if (a.team !== p.team || !a.alive || a.pos.distanceTo(p.pos) > 32) continue;
+          const v = a.hp / a.maxHp;
+          if (v < bv) {
+            bv = v;
+            best = a;
+          }
+        }
+        best.heal(best.maxHp * 0.35 * (1 + (lv - 1) * 0.08));
+        best.buffs.shield = Math.max(best.buffs.shield || 0, 300);
+        best.buffs.shieldT = Math.max(best.buffs.shieldT || 0, 4);
+        M.fx.healFx && M.fx.healFx(best);
+        M.fx.buffFx && M.fx.buffFx(best, 0x7ad0ff);
+        M.fx.say && M.fx.say(p, '大丈夫ですか？大丈夫じゃないですよね！', 'heal', 1.6);
+        M.sfx('heal', p);
+        break;
+      }
+      case 'mameta': {
+        // まめた：なんでも食べる。クッキーがデッキにあると2倍
+        const dbl = p.omamori.includes('cookie');
+        p.heal(p.maxHp * (dbl ? 0.4 : 0.2) * (1 + (lv - 1) * 0.08));
+        M.fx.healFx && M.fx.healFx(p);
+        M.fx.say && M.fx.say(p, dbl ? 'クッキーもぐもぐ！（2倍）' : 'もぐもぐ', 'eat', 1.3);
+        M.sfx('heal', p);
+        break;
+      }
+      case 'ramen':
+        // 学食ラーメン大盛り：たくさん回復、おなかいっぱいで少しおそく
+        p.heal(p.maxHp * 0.45 * (1 + (lv - 1) * 0.08));
+        slowOn(p, 0.25, 3);
+        M.fx.healFx && M.fx.healFx(p);
+        M.fx.say && M.fx.say(p, '大盛りいただきます！', 'noodle', 1.3);
         M.sfx('heal', p);
         break;
       case 'eyemask':
@@ -243,41 +333,65 @@ export class Skills {
         M.sfx('heal', p);
         break;
       case 'hachimaki':
-        p.buffs.atk = 0.35;
-        p.buffs.atkT = 8;
-        M.fx.buffFx && M.fx.buffFx(p, 0xff5a3d);
+        // 駅伝カントク：近くの味方みんなのやる気アップ
+        for (const a of M.punchers) {
+          if (a.team !== p.team || !a.alive || (a !== p && a.pos.distanceTo(p.pos) > 30)) continue;
+          a.addMod('kantoku', { atk: 0.2 * (1 + (lv - 1) * 0.08), spd: 0.15 }, 6);
+          M.fx.buffFx && M.fx.buffFx(a, 0xff5a3d);
+        }
+        M.fx.say && M.fx.say(p, '大作戦、発動！', 'fire', 1.4);
         M.sfx('buff', p);
         break;
       case 'coffee':
+        // ロケッツ・ライブ：スピードアップ＋ブースト。近くの味方も少し速く。てつんどは攻撃力も
         p.buffs.spd = 0.3;
         p.buffs.spdT = 6;
         p.boost = Math.min(6, p.boost + 2);
+        if (p.def.id === 'tetsundo') p.addMod('rockets', { atk: 0.25 }, 6);
+        for (const a of M.punchers) {
+          if (a.team !== p.team || !a.alive || a === p || a.pos.distanceTo(p.pos) > 12) continue;
+          a.addMod('live', { spd: 0.15 }, 4);
+          M.fx.buffFx && M.fx.buffFx(a, 0x5ad7ff);
+        }
         M.fx.buffFx && M.fx.buffFx(p, 0x5ad7ff);
-        M.sfx('buff', p);
+        M.fx.notes && M.fx.notes(p, 5);
+        M.fx.say && M.fx.say(p, p.def.id === 'tetsundo' ? 'ロケッツ、いくぞ！' : '♪ロケッツ♪', 'note', 1.3);
+        M.sfx('drum', p);
         break;
       case 'shield':
+        // 楽器の先生：バリア。近くの味方にも小さいバリア
         p.buffs.shield = 700;
         p.buffs.shieldT = 8;
+        for (const a of M.punchers) {
+          if (a.team !== p.team || !a.alive || a === p || a.pos.distanceTo(p.pos) > 11) continue;
+          a.buffs.shield = Math.max(a.buffs.shield || 0, 250);
+          a.buffs.shieldT = Math.max(a.buffs.shieldT || 0, 6);
+          M.fx.buffFx && M.fx.buffFx(a, 0x7ad0ff);
+        }
         M.fx.buffFx && M.fx.buffFx(p, 0x7ad0ff);
+        M.fx.notes && M.fx.notes(p, 3);
         M.sfx('buff', p);
         break;
       case 'keshigomu': {
-        const pos = p.pos.clone();
+        // 学食の油そば：油の水たまり。入った敵はつるっとすべる（同じ人は2秒に1回）
+        const slip = new Map();
         M.combat.addArea({
           owner: p,
           team: p.team,
-          pos,
-          r: 3.4,
-          life: 20,
-          kind: 'mine',
+          pos: p.pos.clone(),
+          r: 5.2,
+          life: 14,
+          kind: 'oil',
           update: (a) => {
-            for (const t of M.combat.targetsFor(p)) {
-              if (t.isGuardian) continue;
-              if (t.pos.distanceTo(a.pos) < a.r + 0.6) {
-                a.dead = true;
-                M.combat.explode({ owner: p, pos: a.pos, aoe: { r: 4.2, dmg: 380 * atk, color: 0xff8a3d, knock: 10, stun: 1.2 } });
-                break;
-              }
+            for (const t of M.punchers) {
+              if (t.team === p.team || !t.alive) continue;
+              if (t.pos.distanceTo(a.pos) > a.r + 0.6) continue;
+              slowOn(t, 0.45, 0.4);
+              if ((slip.get(t) || -9) > M.time - 2) continue;
+              slip.set(t, M.time);
+              const ang = Math.random() * Math.PI * 2;
+              M.combat.damage(p, t, 60 * atk, { kind: 'disk', dir: _v2.set(Math.cos(ang), 0.15, Math.sin(ang)).clone(), knock: 7, stun: 0.3, soft: true });
+              M.fx.say && M.fx.say(t, 'つるっ！', 'oil');
             }
           },
         });
@@ -285,20 +399,58 @@ export class Skills {
         break;
       }
       case 'marksheet': {
+        // 出席にきびしい先生：欠席スタンプ。近づいた敵はスタン＋しばらくディスクが使えない
         M.combat.addArea({
           owner: p,
           team: p.team,
           pos: p.pos.clone(),
-          r: 7.5,
-          life: 7,
-          kind: 'field',
+          r: 3.6,
+          life: 20,
+          kind: 'stamp',
           update: (a) => {
             for (const t of M.punchers) {
               if (t.team === p.team || !t.alive) continue;
-              if (t.pos.distanceTo(a.pos) < a.r) {
-                t.buffs.slow = 0.5;
-                t.buffs.slowT = Math.max(t.buffs.slowT, 0.3);
+              if (t.pos.distanceTo(a.pos) > a.r + 0.6) continue;
+              if (t.invuln > 0 || t.state === 'special') continue; // 無敵のあいだはふまない
+              a.dead = true;
+              _v2.subVectors(t.pos, a.pos).normalize();
+              M.fx.shock && M.fx.shock(a.pos, 0xff3a3a, 5);
+              if (M.combat.damage(p, t, 150 * atk, { kind: 'disk', dir: _v2.clone(), knock: 4, stun: 1.2, heavy: true }) > 0) {
+                t.diskLock = Math.max(t.diskLock || 0, 4);
+                if (t.charge) t.charge = null;
+                if (t.remote && M.netHit) M.netHit(t, { dl: 4 });
+                M.fx.say && M.fx.say(t, '欠席！', 'judge', 1.4);
               }
+              M.sfx('hitHeavy', t);
+              break;
+            }
+          },
+        });
+        M.sfx('trap', p);
+        break;
+      }
+      case 'tani': {
+        // 単位くれそうな先生：にこにこ近づいてきた敵は、単位（持ち物）を落とす
+        M.combat.addArea({
+          owner: p,
+          team: p.team,
+          pos: p.pos.clone(),
+          r: 4.2,
+          life: 18,
+          kind: 'tani',
+          update: (a) => {
+            for (const t of M.punchers) {
+              if (t.team === p.team || !t.alive) continue;
+              if (t.pos.distanceTo(a.pos) > a.r + 0.6) continue;
+              if (t.invuln > 0 || t.state === 'special') continue; // 無敵のあいだはかからない
+              a.dead = true;
+              const n = dropHalf(M, t);
+              slowOn(t, 0.5, 4);
+              M.combat.damage(p, t, 90 * atk, { kind: 'disk', noJust: true });
+              M.fx.shock && M.fx.shock(a.pos, 0x7ad0ff, 5);
+              M.fx.say && M.fx.say(t, n ? '単位を落とした…' : '単位…ない…', 'water', 1.5);
+              M.sfx('trap', t);
+              break;
             }
           },
         });
@@ -342,6 +494,26 @@ export class Skills {
         M.fx.buffFx && M.fx.buffFx(p, 0xffffff);
         M.sfx('buff', p);
         break;
+      case 'screw': {
+        // スクリュー先生：うずをまいて真上へ。近くの敵を上にふっとばす
+        p.state = 'skill';
+        p.stateT = 0;
+        p.invuln = Math.max(p.invuln, 0.5);
+        this.active.push({ p, kind: 'screw', t: 0, dur: 0.6, hit: new Set(), atk });
+        M.sfx('dash', p);
+        break;
+      }
+      case 'book': {
+        // ブック：前へ突っ走る。ぶつかった敵をはねとばす
+        p.state = 'skill';
+        p.stateT = 0;
+        p.invuln = Math.max(p.invuln, 0.3);
+        this.aimDir(p, _v);
+        this.active.push({ p, kind: 'book', t: 0, dur: 0.55, dir: _v.clone(), hit: new Set(), atk });
+        M.fx.say && M.fx.say(p, 'ワンッ！', 'kira');
+        M.sfx('dash', p);
+        break;
+      }
     }
   }
 
@@ -360,6 +532,15 @@ export class Skills {
         if (a.t >= a.dur) {
           this.fireSpecial(p);
           this.active.splice(i, 1);
+        }
+        continue;
+      }
+      // v1.5 の仲間の技（続くもの）
+      const kr = updateKit(this, a, dt);
+      if (kr) {
+        if (kr === 'done') {
+          const j = this.active.indexOf(a);
+          if (j >= 0) this.active.splice(j, 1);
         }
         continue;
       }
@@ -420,6 +601,50 @@ export class Skills {
       }
       if (a.kind === 'jet') {
         p.vel.copy(a.dir).multiplyScalar(48);
+        if (a.t >= a.dur) {
+          p.state = 'cruise';
+          p.vel.multiplyScalar(0.4);
+          this.active.splice(i, 1);
+        }
+        continue;
+      }
+      if (a.kind === 'screw') {
+        // 上へ。体はくるくる回る（roll）
+        p.vel.set(p.forward.x * 6, 30, p.forward.z * 6);
+        p.roll = (a.t * 26) % (Math.PI * 2);
+        if (!a.local) {
+          if (Math.random() < 0.7) M.fx.trail && M.fx.trail(p, 0xff8a3d);
+          for (const t of M.combat.targetsFor(p)) {
+            if (a.hit.has(t)) continue;
+            if (t.pos.distanceTo(p.pos) > 4.5 + (t.radius || 0.8)) continue;
+            a.hit.add(t);
+            _v2.subVectors(t.pos, p.pos);
+            _v2.y = Math.abs(_v2.y) + 3;
+            _v2.normalize();
+            M.combat.damage(p, t, 230 * (a.atk || 1), { elem: true, kind: 'disk', heavy: true, dir: _v2.clone(), knock: 18, stun: 0.5 });
+          }
+        }
+        if (a.t >= a.dur) {
+          p.roll = 0;
+          p.state = 'hover';
+          p.vel.multiplyScalar(0.3);
+          this.active.splice(i, 1);
+        }
+        continue;
+      }
+      if (a.kind === 'book') {
+        p.vel.copy(a.dir).multiplyScalar(52);
+        p.yaw = Math.atan2(a.dir.x, a.dir.z);
+        if (!a.local) {
+          if (Math.random() < 0.7) M.fx.trail && M.fx.trail(p, 0x7ad0ff);
+          for (const t of M.combat.targetsFor(p)) {
+            if (a.hit.has(t)) continue;
+            if (t.pos.distanceTo(p.pos) > 2.8 + (t.radius || 0.8)) continue;
+            a.hit.add(t);
+            _v2.subVectors(t.pos, p.pos).normalize();
+            M.combat.damage(p, t, 180 * (a.atk || 1), { elem: true, kind: 'disk', heavy: true, dir: _v2.clone(), knock: 15, stun: 0.35 });
+          }
+        }
         if (a.t >= a.dur) {
           p.state = 'cruise';
           p.vel.multiplyScalar(0.4);

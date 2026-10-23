@@ -275,8 +275,10 @@ export class Room {
         const h = humans[s];
         if (h) out.push({ team, slot: s, char: h.char, name: h.name, human: h.id, deck: h.deck, lv: h.lv });
         else {
+          // CPUは、だれも使っていないキャラから（18人いるので、なるべく全員ちがうキャラに）
+          const all = out.map((x) => x.char).concat(this.state.members.map((m) => m.char));
           const used = out.filter((x) => x.team === team).map((x) => x.char);
-          const c = ids.find((x) => !used.includes(x)) || ids[s % ids.length];
+          const c = ids.find((x) => !all.includes(x)) || ids.find((x) => !used.includes(x)) || ids[s % ids.length];
           out.push({ team, slot: s, char: c, name: PUNCHERS[c].short || PUNCHERS[c].name, human: null });
         }
       }

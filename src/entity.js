@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { MOVE, COMBAT, RESPAWN_TIME, RESPAWN_INVULN, ELEM } from './config.js';
 import { OMAMORI } from './characters.js';
+import { statusOf } from './kits.js';
 import { buildPuncher, poseModel, setJetGlow, FACES } from './model.js';
 import { clamp, damp, angleDamp, wrapAngle, lerp } from './util.js';
 import { makeHitInfo } from './physics.js';
@@ -54,11 +55,26 @@ export class Puncher {
     this.ksCd = 0;
     this.omCd = def.omamori.map(() => 0);
     this.omamori = def.omamori.slice();
-    this.elem = OMAMORI[this.omamori[0]].elem;
+    this.elem = def.elem || OMAMORI[this.omamori[0]].elem; // v1.5：キャラの属性で始まる（ディスクを下フリックで変えられる）
     this.elemCd = 0;
     this.diskLock = 0; // 属性変更のあとディスクが使えない時間
     this.charge = null; // ディスク発動までの溜め {id, t, total, slot}
     this.buffs = { atk: 0, atkT: 0, spd: 0, spdT: 0, shield: 0, shieldT: 0, slowT: 0, slow: 0, regen: 0, regenT: 0, big: 0, ikemen: 0 };
+    // v1.5：キャラの技・相性の効果。名前ごとに1つ（同じ名前は上書き）{atk, def, spd, armor, t}
+    //   atk：与えるダメージ +x、def：受けるダメージ +x（マイナスでへる）、spd：速さ +x、armor：ひるまない
+    this.mods = new Map();
+    this.syn = { atk: 0, def: 0, spd: 0, tags: [] }; // 相性（試合のあいだずっと）
+    this.modAtk = 0;
+    this.modDef = 0;
+    this.modSpd = 0;
+    this.armor = false;
+    this.status = 0; // 見た目のしるし（STATUS のビット）。オンラインでも送る
+    this.drunkT = 0; // 酔ってふらふら
+    this.burnT = 0; // やけど（少しずつダメージ）
+    this.burnDps = 0;
+    this.burnSrc = null;
+    this.poopT = 0; // おなかがゆるい（ときどき止まる）
+    this.poopTick = 0;
     this.invuln = 0;
     this.justT = 0;
     this.stunT = 0;
@@ -108,9 +124,11 @@ export class Puncher {
     this.boost = BOOST_SEGS;
     this.invuln = RESPAWN_INVULN;
     this.stunT = this.hurtT = 0;
+    this.roll = 0; // スクリューの途中で倒れても、かたむいたままにならない
     this.dash = null;
     this.charge = null;
     this.lock = null;
+    this.clearMods();
     this.model.visible = true;
     this.model.scale.setScalar(1);
     this.updateAxes();
@@ -124,11 +142,40 @@ export class Puncher {
     this.right.set(-Math.cos(this.yaw), 0, Math.sin(this.yaw));
   }
 
+  // 技・相性の効果を足し合わせる
+  addMod(tag, m, t) {
+    this.mods.set(tag, { atk: m.atk || 0, def: m.def || 0, spd: m.spd || 0, armor: !!m.armor, t });
+    this.sumMods();
+  }
+  hasMod(tag) {
+    return this.mods.has(tag);
+  }
+  clearMods() {
+    this.mods.clear();
+    this.drunkT = this.burnT = this.poopT = 0;
+    this.sumMods();
+  }
+  sumMods() {
+    let a = this.syn.atk, d = this.syn.def, sp = this.syn.spd, ar = false;
+    for (const m of this.mods.values()) {
+      a += m.atk;
+      d += m.def;
+      sp += m.spd;
+      if (m.armor) ar = true;
+    }
+    this.modAtk = a;
+    this.modDef = d;
+    this.modSpd = sp;
+    this.armor = ar;
+  }
+
   // 速さの倍率（キャラ・バフ・荷物）
   moveMul() {
     let m = this.speedMul;
     if (this.buffs.spdT > 0) m *= 1 + this.buffs.spd;
     if (this.buffs.slowT > 0) m *= 1 - this.buffs.slow;
+    if (this.modSpd) m *= Math.max(0.3, 1 + this.modSpd);
+    if (this.drunkT > 0) m *= 0.8;
     const n = this.carry.sakura.length;
     if (n > 0) m *= 1 - Math.min(MOVE.carrySlowMax, n * MOVE.carrySlowPer);
     if (this.carry.balls.length) m *= 1 - Math.min(0.4, this.carry.balls.length * 0.08);
@@ -408,6 +455,8 @@ export class Puncher {
       // スティック右（指を右へ）＝画面で右へ曲がる。yaw は左回りがプラスなので引く
       this.yaw = wrapAngle(this.yaw - yr * dt - lx);
       this.pitch = clamp(this.pitch + pr * dt + ly, -MOVE.pitchLimit, MOVE.pitchLimit);
+      // 酔ってふらふら（コーダイの一気飲みのあと）：向きが勝手に左右へゆれる
+      if (this.drunkT > 0) this.yaw = wrapAngle(this.yaw + Math.sin(this.animT * 4.7) * 0.85 * dt * Math.min(1, this.drunkT));
       // ロックオン：相手のほうへ自動で向く
       const L = this.lock;
       if (L && L.alive && !this.charge) {
@@ -570,6 +619,50 @@ export class Puncher {
     const B = this.buffs;
     for (const k of ['atkT', 'spdT', 'shieldT', 'slowT', 'regenT']) B[k] = Math.max(0, B[k] - dt);
     if (B.shieldT <= 0) B.shield = 0;
+    // 弱くて長いおそさ（強いのに上書きされていたもの）を、強いのが切れたら続ける（kits.js の slowDown）
+    if (B.slowNext) {
+      B.slowNext.t -= dt;
+      if (B.slowNext.t <= 0) B.slowNext = null;
+      else if (B.slowT <= 0) {
+        B.slow = B.slowNext.amt;
+        B.slowT = B.slowNext.t;
+        B.slowNext = null;
+      }
+    }
+    // 技・相性の効果の時間
+    if (this.mods.size) {
+      let ch = false;
+      for (const [k, m] of this.mods) {
+        m.t -= dt;
+        if (m.t <= 0) {
+          this.mods.delete(k);
+          ch = true;
+          if (this.match.skills.onModEnd) this.match.skills.onModEnd(this, k);
+        }
+      }
+      if (ch) this.sumMods();
+    }
+    this.drunkT = Math.max(0, this.drunkT - dt);
+    if (!this.match.netClient) this.status = statusOf(this);
+    // やけど・おなか（ダメージはホストだけが計算する。入った人の端末では damage は何もしない）
+    if (this.burnT > 0) {
+      this.burnT -= dt;
+      this.burnAcc = (this.burnAcc || 0) + dt;
+      if (this.burnAcc >= 0.5) {
+        this.burnAcc = 0;
+        if (this.alive) this.match.combat.damage(this.burnSrc, this, this.burnDps * 0.5, { kind: 'dot' });
+      }
+    }
+    if (this.poopT > 0) {
+      this.poopT -= dt;
+      this.poopTick -= dt;
+      if (this.poopTick <= 0 && this.alive) {
+        // おなかがゆるくて、ときどき止まってしまう
+        this.poopTick = 1.6;
+        this.match.combat.damage(this.poopSrc || null, this, 40, { kind: 'dot', stun: 0.3, soft: true });
+        this.match.fx.say && this.match.fx.say(this, 'ギュルル…', 'poop');
+      }
+    }
     if (B.regenT > 0) this.heal(this.maxHp * B.regen * dt, true);
     if (B.big > 0) {
       B.big -= dt;

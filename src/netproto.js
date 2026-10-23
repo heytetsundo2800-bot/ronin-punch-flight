@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OMAMORI, OMAMORI_IDS } from './characters.js';
 import { ELEM } from './config.js';
 
-export const PROTO = 3; // 形を変えたら上げる（ちがう版どうしでは遊べない）。3：ディスクのモンスター（summonAct）・弾を撃った人の番号
+export const PROTO = 4; // 形を変えたら上げる（ちがう版どうしでは遊べない）。3：ディスクのモンスター（summonAct）・弾を撃った人の番号。4：v1.5 の仲間（状態のしるし・新しい弾とわな）
 
 // 状態の番号
 export const STATES = ['hover', 'fly', 'dash', 'cruise', 'step', 'roll', 'brake', 'uturn', 'hurt', 'stun', 'ko', 'special', 'skill'];
@@ -11,7 +11,10 @@ const STATE_NO = Object.fromEntries(STATES.map((s, i) => [s, i]));
 export const stateNo = (s) => (STATE_NO[s] == null ? 0 : STATE_NO[s]);
 export const ELEMS = Object.keys(ELEM);
 export const PHASES = ['wait', 'intro', 'play', 'finish', 'result'];
-export const PROJ_KINDS = ['ink', 'akahon', 'tangocho', 'pencil', 'guardianShot', 'other'];
+// 最後はいつも 'other'（知らない種類）
+export const PROJ_KINDS = ['ink', 'akahon', 'tangocho', 'pencil', 'guardianShot', 'voice', 'vomit', 'phone', 'ball', 'water', 'sneeze', 'gust', 'ice', 'cookie', 'other'];
+// その場に置く物（わな・結界）。知らない種類は 'field'
+export const AREA_KINDS = ['mine', 'field', 'noodle', 'oil', 'stamp', 'tani'];
 export const MSG_SNAP = 1;
 export const MSG_ME = 2;
 

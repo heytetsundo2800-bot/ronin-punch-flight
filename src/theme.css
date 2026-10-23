@@ -2345,3 +2345,270 @@ button {
     flex-basis: 23%;
   }
 }
+
+/* 両手のとき：左の親指は「アクセル」の丸（スティックではないので、中の玉は動かない）。飛んでいるあいだ黄色く光る */
+.stick-ring.accel {
+  left: -40px;
+  top: -40px;
+  width: 80px;
+  height: 80px;
+}
+.stick-ring.accel .knob {
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  opacity: 0.55;
+}
+.stick-ring.accel.on {
+  border-color: rgba(255, 222, 46, 0.9);
+  box-shadow: 0 0 22px rgba(255, 222, 46, 0.4), inset 0 0 14px rgba(255, 222, 46, 0.28);
+}
+.stick-ring.accel.on .knob {
+  opacity: 1;
+  background: radial-gradient(circle, #ffffff 0, rgba(255, 232, 120, 0.95) 45%, rgba(255, 190, 40, 0.35) 72%);
+  box-shadow: 0 0 14px rgba(255, 210, 60, 0.85);
+  animation: accelPulse 0.45s ease-in-out infinite alternate;
+}
+@keyframes accelPulse {
+  from {
+    transform: scale(0.9);
+  }
+  to {
+    transform: scale(1.18);
+  }
+}
+
+/* 自分のチームの色：赤チームの人は、自分のHP・持ち数も赤（前はいつも青で「自分が青チーム」に見えて混乱した） */
+.hud.my1 .selfbox .shp i {
+  background: repeating-linear-gradient(90deg, #ffa3b6 0 6px, #ff3d62 6px 8px);
+}
+.hud.my1 .selfbox .scarry {
+  background: linear-gradient(160deg, #ff9db0, #ff3d62 60%, #b81a3a);
+}
+/* HPが少ないときは、チームの色ではなく黄色の点滅（赤チームの色とまちがえないように） */
+.hud .selfbox .shp i.low {
+  background: repeating-linear-gradient(90deg, #fff07a 0 6px, #ffb020 6px 8px);
+  animation: lowHpBlink 0.5s steps(2, jump-none) infinite;
+}
+@keyframes lowHpBlink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.45;
+  }
+}
+/* ロックオンの的は、敵のチームの色（青チームの人には赤、赤チームの人には青） */
+.hud.my1 .lockbtn img {
+  background: linear-gradient(180deg, #8fd0ff, #1f6fe0);
+}
+.hud.my1 .lockbtn.locked img {
+  background: linear-gradient(180deg, var(--y2), var(--y) 55%, #ffb81f);
+}
+
+/* v1.5：仲間の技のことば（キャラの上に出る） */
+.fxnum.kit {
+  font-family: inherit;
+  font-style: normal;
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  white-space: nowrap;
+}
+.fxnum.kit.beat { color: #ffd23a; font-size: 22px; font-style: italic; }
+.fxnum.kit.fire { color: #ff8a3a; }
+.fxnum.kit.water { color: #7fe3ff; }
+.fxnum.kit.wind { color: #8dffb0; }
+.fxnum.kit.drunk { color: #ffb0d0; }
+.fxnum.kit.rage { color: #ff4a4a; font-size: 22px; }
+.fxnum.kit.kira { color: #fff2a8; }
+.fxnum.kit.note { color: #ffd23a; font-size: 24px; }
+.fxnum.kit.sleep { color: #c9b8ff; font-size: 20px; }
+.fxnum.kit.call { color: #9dffcf; font-size: 15px; }
+.fxnum.kit.talk { color: #ffffff; font-size: 15px; }
+.fxnum.kit.judge { color: #d7a6ff; }
+.fxnum.kit.eat { color: #ffc98a; }
+.fxnum.kit.noodle { color: #ffe27a; }
+.fxnum.kit.stink { color: #b8e05a; }
+.fxnum.kit.poop { color: #d0a070; }
+.fxnum.kit.kick { color: #ff9a6a; font-size: 24px; font-style: italic; }
+.fxnum.kit.donut { color: #ff9cc0; font-size: 22px; }
+.fxnum.kit.heart { color: #ff8ac0; font-size: 20px; }
+
+/* v1.5 相性のお知らせ・しるし */
+.synfeed {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--sat) + 232px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: min(92vw, 380px);
+  pointer-events: none;
+}
+.synfeed .syn {
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: center;
+  color: #fff;
+  padding: 4px 12px;
+  clip-path: var(--cut-s);
+  background: linear-gradient(90deg, rgba(6, 10, 22, 0.94), rgba(26, 18, 40, 0.94));
+  box-shadow: inset 3px 0 0 #ff8fc0, inset -3px 0 0 #ff8fc0;
+  animation: synIn 0.3s ease-out;
+}
+.synfeed .syn.t0 {
+  box-shadow: inset 3px 0 0 #5aa8ff, inset -3px 0 0 #ff8fc0;
+}
+.synfeed .syn.t1 {
+  box-shadow: inset 3px 0 0 #ff6f88, inset -3px 0 0 #ff8fc0;
+}
+.synfeed .syn.bad {
+  background: linear-gradient(90deg, rgba(22, 8, 14, 0.94), rgba(40, 10, 20, 0.94));
+  box-shadow: inset 3px 0 0 #8a8f9a, inset -3px 0 0 #8a8f9a;
+  color: #ffd0da;
+}
+@keyframes synIn {
+  from {
+    transform: translateY(-6px) scale(0.85);
+    opacity: 0;
+  }
+}
+.mem .synb {
+  position: absolute;
+  left: 22px;
+  top: -5px;
+  z-index: 2;
+  font-size: 10px;
+  line-height: 13px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  text-align: center;
+  font-weight: 900;
+  color: #fff;
+  background: #ff5aa8;
+  border-radius: 7px;
+  box-shadow: 0 0 0 1.5px #0a0d18;
+  pointer-events: none;
+}
+.team-col.right .mem .synb {
+  left: auto;
+  right: 22px;
+}
+.mem .synb.bad {
+  background: #4a4f5c;
+  font-size: 8px;
+}
+.ntag.rev .nm {
+  color: #b9ffd2;
+  text-shadow: 0 0 6px rgba(125, 255, 176, 0.9), 0 1px 0 #04060d;
+}
+.ntag.rev .hp {
+  box-shadow: 0 0 0 1px rgba(125, 255, 176, 0.9);
+}
+
+/* v1.5 キャラが18人：横にスクロールする2段の一覧 */
+.charlist {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-columns: 62px;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
+  padding: 2px 2px 6px;
+  margin: 6px 0 4px;
+  scrollbar-width: none;
+  flex-shrink: 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+.charlist::-webkit-scrollbar {
+  display: none;
+}
+.charlist button {
+  position: relative;
+  padding: 3px 3px 2px;
+  font-size: 10px;
+  line-height: 1.25;
+  scroll-snap-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.charlist button > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.charlist button img {
+  box-shadow: inset 0 -3px 0 var(--e, transparent);
+  border-bottom: 3px solid var(--e, transparent);
+}
+.charlist button .pr {
+  position: absolute;
+  right: 4px;
+  top: 3px;
+  font-style: normal;
+  font-size: 10px;
+  color: #ff7ab8;
+  text-shadow: 0 0 3px #0a0d18, 0 0 3px #0a0d18;
+}
+.charrow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-columns: 66px;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.charrow::-webkit-scrollbar {
+  display: none;
+}
+.charrow button {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.charrow button img {
+  width: 50px;
+  height: 50px;
+  border-bottom: 3px solid var(--e, transparent);
+}
+.skillbox .tag.pv {
+  background: #c9a6ff;
+}
+.skillbox .tag.syn {
+  background: #ff9cc8;
+}
+.statrow .note small {
+  font-size: 10px;
+  opacity: 0.75;
+  margin-left: 2px;
+  white-space: nowrap;
+}
+/* 背の低いスマホ：顔を少し小さく */
+@media (max-height: 720px) and (orientation: portrait) {
+  .charlist {
+    grid-auto-columns: 54px;
+    gap: 5px;
+  }
+  .charlist button {
+    font-size: 9px;
+  }
+}
+@media (orientation: landscape) and (max-height: 620px) {
+  .charlist button img {
+    width: 100%;
+  }
+}

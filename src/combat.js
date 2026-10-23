@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { COMBAT, elemMul, MOVE } from './config.js';
 import { clamp } from './util.js';
+import { slowOn } from './kits.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -128,27 +129,40 @@ export class Combat {
   }
 
   shoot(p, t, base) {
-    const sp = p.def.attack.projSpeed || 40;
+    const A = p.def.attack;
+    const sp = A.projSpeed || 40;
     // 少し先を読んでねらう
     _v.copy(t.pos);
     const d = t.pos.distanceTo(p.pos);
     if (t.vel) _v.addScaledVector(t.vel, (d / sp) * 0.6);
+    // 重さのある弾（ゲロ・ボール）は、山なりに少し上をねらう
+    if (A.gravity) _v.y += 0.5 * A.gravity * (d / sp) * (d / sp);
     _v.sub(p.pos).normalize();
     const start = p.pos.clone().addScaledVector(p.forward, 0.9);
     start.y += 0.3;
-    this.spawnProjectile({
+    const heavy = A.heavyAt != null && p.atk.hitIdx === A.heavyAt;
+    const pr = {
       owner: p,
       pos: start,
       vel: _v.clone().multiplyScalar(sp),
       dmg: base * p.def.atk,
-      radius: 0.55,
-      life: (p.def.attack.range + 4) / sp,
-      kind: 'ink',
-      opts: { elem: true, kind: 'normal', knock: 2.5 },
-      homing: t,
-      turn: 2.2,
-    });
-    this.match.sfx('shot', p);
+      radius: (A.radius || 0.55) * (heavy ? 1.4 : 1),
+      life: (A.range + 4) / sp,
+      kind: A.proj || 'ink',
+      opts: { elem: true, kind: 'normal', knock: heavy ? 9 : 2.5, heavy },
+      homing: A.gravity ? null : t,
+      turn: A.turn || 2.2,
+      gravity: A.gravity || 0,
+      big: heavy,
+    };
+    // 当たるとおそくなる弾（ゲロ・くしゃみ）
+    if (A.splashSlow) {
+      pr.onHit = (q, tt) => {
+        if (this.damage(q.owner, tt, q.dmg, { ...q.opts, dir: _v.copy(q.vel).normalize().clone() }) > 0) slowOn(tt, A.splashSlow, 1.2);
+      };
+    }
+    this.spawnProjectile(pr);
+    this.match.sfx(A.proj === 'voice' ? 'voice' : 'shot', p);
   }
 
   // ===== ダメージの計算 =====
@@ -176,6 +190,9 @@ export class Combat {
     }
     if (src && src.buffs && src.buffs.atkT > 0) dmg *= 1 + src.buffs.atk;
     if (src && src.buffs && src.buffs.ikemen > 0) dmg *= 1.5;
+    // 技・相性の効果（攻撃力アップ／受けるダメージの増減）
+    if (src && src.modAtk) dmg *= Math.max(0.3, 1 + src.modAtk);
+    if (t.modDef) dmg *= Math.max(0.35, 1 + t.modDef);
     if (src && src.cpu && M.diff) dmg *= M.diff.dmg;
     if (t.buffs.big > 0) dmg *= 0.5;
     dmg = Math.round(dmg);
@@ -198,6 +215,7 @@ export class Combat {
       src.lastAssistT = M.time;
     }
     t.addSP(dmg * COMBAT.specialPerDamage * 0.35);
+    if (M.skills.onDamaged) M.skills.onDamaged(t, src, dmg, opts);
     // ディスクの溜め中ならキャンセル
     let cc = null;
     if (t.charge && (opts.cancel || opts.kind === 'disk' || opts.kind === 'ks' || opts.kind === 'special' || opts.heavy)) {
@@ -206,8 +224,8 @@ export class Combat {
       cc = { slot: t.charge.slot, cd: t.omCd[t.charge.slot] };
       t.charge = null;
     }
-    // ひるみ・ふっとび
-    const big = t.buffs.big > 0;
+    // ひるみ・ふっとび（巨大化・ブチギレ中はひるまない）
+    const big = t.buffs.big > 0 || t.armor;
     let kv = null, stunV = 0, hurtV = 0;
     if (opts.knock && opts.dir && !big) {
       t.vel.addScaledVector(opts.dir, opts.knock);
@@ -224,7 +242,8 @@ export class Combat {
     }
     // オンライン対戦：ほかの端末で動かしている人には、ふっとび・ひるみを知らせる
     if (t.remote && M.netHit) M.netHit(t, { k: kv, s: stunV, h: hurtV, cc });
-    if ((opts.heavy || opts.stun > 0.3) && !big) M.mode.onKnock && M.mode.onKnock(t, src);
+    // （おなかのギュルル などの小さな止まり＝soft では、持ち物を落とさない）
+    if ((opts.heavy || opts.stun > 0.3) && !big && !opts.soft) M.mode.onKnock && M.mode.onKnock(t, src);
     M.fx.hit && M.fx.hit(t, src, dmg, { weak, heavy: opts.heavy, kind: opts.kind });
     M.sfx(opts.heavy ? 'hitHeavy' : 'hit', t, src);
     M.hitFeedback(t, src, !!opts.heavy, !!opts.melee, opts.stun || 0);

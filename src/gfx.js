@@ -171,7 +171,14 @@ export function cel(color, opts = {}) {
 const matCache = new Map();
 // 昔からの入口。いまはセルの材質を返す（同じ色・同じ設定は使い回す）
 export function toon(color, opts = {}) {
-  const key = color + '|' + JSON.stringify(opts, (k, v) => (v && v.isTexture ? v.uuid : v));
+  // 覚えておくための名前。テクスチャは uuid にする（JSON.stringify にそのまま渡すと、テクスチャの toJSON が
+  // 絵を PNG にしてしまい、1枚 0.5 秒以上かかる。replacer より先に toJSON がよばれるため）
+  const o2 = {};
+  for (const k in opts) {
+    const v = opts[k];
+    o2[k] = v && v.isTexture ? 'tex:' + v.uuid : v;
+  }
+  const key = color + '|' + JSON.stringify(o2);
   if (!opts.unique && matCache.has(key)) return matCache.get(key);
   const m = cel(color, opts);
   if (!opts.unique) {

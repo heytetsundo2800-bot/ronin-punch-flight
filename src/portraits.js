@@ -37,14 +37,17 @@ export class Portraits {
     head.getWorldPosition(hp);
     const cam = this.cam;
     cam.aspect = w / h;
+    // 頭の小さいキャラ（トリキなど）は、顔アイコンで少し寄る（headScale が 1 のキャラは前と同じ）
+    const look = model.userData.look;
+    const hk = look && look.headScale && look.headScale !== 1 ? Math.sqrt(look.headScale) : 1;
     if (kind === 'face') {
       cam.fov = 26;
-      cam.position.set(hp.x + 0.35, hp.y + 0.05, hp.z + 1.55);
-      cam.lookAt(hp.x, hp.y - 0.02, hp.z);
+      cam.position.set(hp.x + 0.35 * hk, hp.y + 0.05 * hk, hp.z + 1.55 * hk);
+      cam.lookAt(hp.x, hp.y - 0.02 * hk, hp.z);
     } else if (kind === 'bust') {
       cam.fov = 30;
-      cam.position.set(hp.x + 0.6, hp.y - 0.1, hp.z + 2.4);
-      cam.lookAt(hp.x, hp.y - 0.35, hp.z);
+      cam.position.set(hp.x + 0.6 * hk, hp.y - 0.1 * hk, hp.z + 2.4 * hk);
+      cam.lookAt(hp.x, hp.y - 0.35 * hk, hp.z);
     } else if (hero) {
       model.rotation.y = -0.32;
       model.updateMatrixWorld(true);
@@ -166,6 +169,13 @@ export class Portraits {
   }
   get(id, team) {
     return this.render(id, team, 'face', 128, 128);
+  }
+  // もう作ってある絵だけ返す（まだなら null。一覧を少しずつ作るとき用）
+  cached(id, team) {
+    return this.cache.get(id + '|' + team + '|face|128|1') || null;
+  }
+  monsterCached(monId, size = 160) {
+    return this.cache.get('mon|' + monId + '|' + size) || null;
   }
   bust(id, team) {
     return this.render(id, team, 'bust', 256, 320);

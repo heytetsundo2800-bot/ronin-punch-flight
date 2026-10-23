@@ -7,7 +7,7 @@ import { VERSION, BUILD, MODES, DIFFICULTY, ELEM, TEAM, rankOf, RANKS, STAGES, S
 import { PUNCHERS, PUNCHER_IDS, OMAMORI, OMAMORI_IDS, KIND_COLOR, KIND_NAME, RARE_COLOR } from './characters.js';
 import { buildMonster, poseMonster, MONSTERS } from './monsters.js';
 import { projectileLook } from './fx.js';
-import { buildPuncher, poseModel } from './model.js';
+import { buildPuncher, poseModel, EMOTE_PICKS } from './model.js';
 import { Portraits } from './portraits.js';
 import { Input } from './input.js';
 import { Match } from './match.js';
@@ -19,11 +19,31 @@ import { Room } from './room.js';
 import { HostMatch, ClientMatch } from './netmatch.js';
 import { rtcSupported } from './rtc.js';
 import { el, $, $$, store, escapeHtml, isIOS, isLINE, isInApp, isStandalone, hasTouch, clamp, damp } from './util.js';
+import { PAIRS, MACHIDA } from './kits.js';
 import { toon, addOutline, disposeDeep, setOutlineViewport, shadowTex } from './gfx.js';
 import { Post, GRADES } from './post.js';
 import { buildLobbyArt, LOBBY_GROUND } from './lobbyart.js';
 
 const MODE_KEYS = ['scramble', 'flag', 'ball'];
+
+
+// まだ作っていない絵のかわり（とうめいな1ドット）
+const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+// キャラえらびに出す「相性」（kits.js の PAIRS・MACHIDA から）
+function partnerOf(id) {
+  const nm = (k) => (PUNCHERS[k] ? PUNCHERS[k].short || PUNCHERS[k].name : k);
+  const out = [];
+  for (const pr of PAIRS) {
+    if (pr.a !== id && pr.b !== id) continue;
+    const o = pr.a === id ? pr.b : pr.a;
+    let text = '同じチームだと、2人とも攻撃力アップ・受けるダメージが少しへる。';
+    if (pr.enemy) text += '敵どうしになると、2人とも少し弱くなる。';
+    if (pr.kick) text += id === 'yuka' ? 'そして、ゆかは10秒ごとにエブンを蹴る（エブンはうれしい）。' : 'ただし、ゆかに10秒ごとに蹴られてHPが半分になる（うれしいので少し強くなる）。';
+    out.push({ title: nm(o) + 'と同じチーム', text });
+  }
+  if (MACHIDA.includes(id)) out.push({ title: '町田ブラザーズ', text: MACHIDA.map(nm).join('・') + 'の4人がそろうと、4人とも攻撃力とスピードアップ。' });
+  return out;
+}
 
 class App {
   constructor() {
@@ -320,7 +340,7 @@ class App {
   lobbyEmote(name) {
     const L = this.lobby;
     if (!L || !L.model) return;
-    const pick = { tora: ['laugh', 'flex', 'wave', 'thumbs'], even: ['wave', 'thumbs', 'flex', 'point'], aomachi: ['point', 'thumbs', 'wave', 'bow'] }[L.charId] || ['wave'];
+    const pick = EMOTE_PICKS[L.charId] || ['wave'];
     L.emote = name || pick[Math.floor(Math.random() * pick.length)];
     L.emoteT = L.emoteDur = 1.6;
   }
@@ -448,7 +468,7 @@ class App {
       m.position.set(Math.sin(turn) * U.push * 0.25, 0.7 - L.monCy * L.monBase + (U.lift - U.dive) * 0.6 + Math.sin(L.t * 1.6) * 0.06, Math.cos(turn) * U.push * 0.25);
       m.scale.setScalar(L.monBase * (ph === 'act' ? 1 + Math.sin(kk * Math.PI) * 0.05 : 1));
       // 攻撃のディスクは、口から弾が飛んでいく
-      if (ph === 'act' && L.lastPh !== 'act' && L.monDisc && /^(akahon|tangocho|pencil)$/.test(L.monDisc)) {
+      if (ph === 'act' && L.lastPh !== 'act' && L.monDisc && /^(akahon|tangocho|pencil|cookie)$/.test(L.monDisc)) {
         if (L.shot) L.scene.remove(L.shot.m);
         const sm = projectileLook(L.monDisc);
         sm.scale.setScalar(0.7);
@@ -464,7 +484,7 @@ class App {
         const q = L.shot;
         q.t += dt;
         q.m.position.addScaledVector(q.v, dt);
-        if (L.monDisc === 'tangocho') q.m.rotation.y += dt * 16;
+        if (L.monDisc === 'tangocho' || L.monDisc === 'cookie') q.m.rotation.y += dt * (L.monDisc === 'cookie' ? 9 : 16);
         else q.m.lookAt(q.m.position.x + q.v.x, q.m.position.y + q.v.y, q.m.position.z + q.v.z);
         q.m.scale.setScalar(0.7 * Math.max(0.01, 1 - Math.max(0, q.t - 0.45) / 0.25));
         if (q.t > 0.7) {
@@ -679,17 +699,55 @@ class App {
     else this.showHome();
   }
 
+  // ===== 顔・ディスクの絵を少しずつ入れる =====
+  // 18人・21枚の絵を一度に作ると、遅い端末では数秒かたまる。作ってある絵はすぐ入れて、
+  // まだの絵は 1フレームに少しずつ作る（first：先に作りたいもの＝選んでいるキャラなど）
+  porImg(id, team = 0) {
+    const u = this.portraits.cached(id, team);
+    return u ? `src="${u}"` : `src="${BLANK_IMG}" data-por="${id}" data-team="${team}"`;
+  }
+  monImg(monId, size = 128) {
+    const u = this.portraits.monsterCached(monId, size);
+    return u ? `src="${u}"` : `src="${BLANK_IMG}" data-mon="${monId}" data-size="${size}"`;
+  }
+  fillImgs(root, first) {
+    const todo = [...root.querySelectorAll('img[data-por], img[data-mon]')];
+    if (!todo.length) return;
+    if (first) todo.sort((a, b) => (b.dataset.por === first || b.dataset.mon === first ? 1 : 0) - (a.dataset.por === first || a.dataset.mon === first ? 1 : 0));
+    const step = () => {
+      const t0 = performance.now();
+      while (todo.length && performance.now() - t0 < 14) {
+        const im = todo.shift();
+        if (!im.isConnected) continue;
+        try {
+          if (im.dataset.por) im.src = this.portraits.get(im.dataset.por, +im.dataset.team || 0);
+          else im.src = this.portraits.monster(im.dataset.mon, +im.dataset.size || 128);
+        } catch (e) {}
+        im.removeAttribute('data-por');
+        im.removeAttribute('data-mon');
+      }
+      if (todo.length) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   // ===== ホーム（ロビー）=====
   showHome() {
     sound.playBgm('menu');
     // ディスクの絵を、ひまなときに少しずつ先に作っておく（ディスク画面をすぐ開けるように）
     if (!this._monWarm) {
       this._monWarm = true;
-      const ids = OMAMORI_IDS.slice();
+      // （そのあと18人の顔も。キャラえらび・オンラインの部屋をすぐ開けるように）
+      const ids = OMAMORI_IDS.map((id) => ['m', OMAMORI[id].mon]).concat(PUNCHER_IDS.map((id) => ['p', id]));
       const step = () => {
-        const id = ids.shift();
-        if (!id) return;
-        if (!this.match) this.portraits.monster(OMAMORI[id].mon, 128);
+        const it = ids.shift();
+        if (!it) return;
+        if (!this.match) {
+          try {
+            if (it[0] === 'm') this.portraits.monster(it[1], 128);
+            else this.portraits.get(it[1], 0);
+          } catch (e) {}
+        }
         setTimeout(step, 140);
       };
       setTimeout(step, 1200);
@@ -722,7 +780,7 @@ class App {
        </div>
        <button class="battlebtn"><span class="en">BATTLE</span><span class="jp">バトル</span></button>
        <button class="onlinebtn">${ICON.online}<b>フレンドとオンライン対戦</b><small>部屋をつくって LINE で招待（ベータ）</small></button>
-       <div class="homechar"><span class="en">${escapeHtml(def.en)}</span><div class="nm">${escapeHtml(def.name)}</div><div class="tp">${def.typeName}・${ELEM[def.elem].name}</div></div>
+       <div class="homechar"><span class="en">${escapeHtml(def.en)}</span><div class="nm">${escapeHtml(def.name)}</div><div class="tp">${def.typeName}・${def.elemLabel || ELEM[def.elem].name}</div></div>
        <div style="flex:1"></div>
        <div class="tabs">
          <button data-t="char"><span class="i">${ICON.fighter}</span>パンチャー</button>
@@ -1011,11 +1069,12 @@ class App {
        <div class="card roomcode"><div><div class="note">部屋コード</div><div class="code">${room.code}</div></div><div class="col"><button class="btn y small invite">LINEで招待</button><button class="btn k small copy">コピー</button></div></div>
        <div class="card teams"><div class="tcol t0"><h4>青チーム</h4><div class="slots"></div></div><div class="tcol t1"><h4>赤チーム</h4><div class="slots"></div></div></div>
        <div class="card ropts"></div>
-       <div class="card mychar"><h3>自分のキャラ</h3><div class="charrow">${PUNCHER_IDS.map((id) => `<button data-id="${id}"><img alt="" src="${this.portraits.get(id, 0)}"><span>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</span></button>`).join('')}</div></div>
+       <div class="card mychar"><h3>自分のキャラ<span class="hint">横にスクロールで18人</span></h3><div class="charrow">${PUNCHER_IDS.map((id) => `<button data-id="${id}" style="--e:${ELEM[PUNCHERS[id].elem].color}"><img alt="" ${this.porImg(id, 0)}><span>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</span></button>`).join('')}</div></div>
        ${host ? '<button class="btn y wide start">スタート</button>' : '<div class="waitmsg">ホストがスタートするのを待っています…</div>'}
        <p class="note" style="text-align:center">${host ? 'メンバーをタップするとチームを入れかえます' : 'ホストの人はアプリを閉じないでね'}</p>`,
       'panel scroll room'
     );
+    this.fillImgs(s, this.save.char);
     const leave = async () => {
       const ok = await this.confirm('部屋を出る', host ? '部屋をとじます。入っている人も外に出ます。' : '部屋から出ますか？', '出る', 'もどる');
       if (!ok) return;
@@ -1160,12 +1219,13 @@ class App {
     this.lobby.pose = 'hover';
     const s = this.setScreen(
       `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>パンチャー</h2></div>
-       <div class="charlist">${PUNCHER_IDS.map((id) => `<button data-id="${id}"><img alt="" src="${this.portraits.get(id, 0)}"><div>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</div></button>`).join('')}</div>
+       <div class="charlist">${PUNCHER_IDS.map((id) => `<button data-id="${id}" style="--e:${ELEM[PUNCHERS[id].elem].color}"><img alt="" ${this.porImg(id, 0)}><div>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</div>${partnerOf(id).length ? '<i class="pr">♥</i>' : ''}</button>`).join('')}</div>
        <div style="flex:1;min-height:150px"></div>
        <div class="card info" style="max-height:46vh;overflow-y:auto;touch-action:pan-y"></div>
        <button class="btn y wide pick">このキャラで戦う</button>`,
       'panel charsel'
     );
+    this.fillImgs(s, cur);
     s.style.background = 'linear-gradient(180deg, rgba(14,18,32,0.9) 0, rgba(14,18,32,0.0) 26%, rgba(14,18,32,0.0) 40%, rgba(14,18,32,0.92) 56%)';
     const info = $('.info', s);
     const render = () => {
@@ -1178,17 +1238,28 @@ class App {
         [55 - st.spd * 7.5, 50 + st.spd * 4.5],
       ];
       const cs = S.charStats[cur];
-      info.innerHTML = `<div class="statrow"><div style="flex:1"><div style="font-size:20px">${escapeHtml(d.name)}</div><div class="note">${d.typeName}タイプ・属性：<span style="color:${ELEM[d.elem].color}">${ELEM[d.elem].name}</span></div><p>${escapeHtml(d.profile)}</p>${cs ? `<div class="note">このキャラで ${cs.plays}戦 ${cs.wins}勝</div>` : ''}</div>
+      const syn = partnerOf(cur);
+      info.innerHTML = `<div class="statrow"><div style="flex:1"><div style="font-size:20px">${escapeHtml(d.name)}</div><div class="note">${d.typeName}タイプ・属性：<span style="color:${ELEM[d.elem].color}">${escapeHtml(d.elemLabel || ELEM[d.elem].name)}</span>${d.elemLabel ? `<small>（中身は${ELEM[d.elem].name}）</small>` : ''}</div><p>${escapeHtml(d.profile)}</p>${cs ? `<div class="note">このキャラで ${cs.plays}戦 ${cs.wins}勝</div>` : ''}</div>
         <svg class="stats3" viewBox="0 0 110 100"><polygon points="55,10 98,72 12,72" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.3)"/><polygon points="${pts.map((p) => p.join(',')).join(' ')}" fill="rgba(255,212,0,0.55)" stroke="#ffd400" stroke-width="2"/><text x="55" y="8" fill="#fff" font-size="9" text-anchor="middle">こうげき</text><text x="101" y="84" fill="#fff" font-size="9" text-anchor="end">たいりょく</text><text x="9" y="84" fill="#fff" font-size="9">スピード</text></svg></div>
         <div class="skillbox"><span class="tag">スキル</span><div><b>${escapeHtml(d.skill.name)}</b>（${d.skill.cd}秒）<p>${escapeHtml(d.skill.desc)}</p></div></div>
         <div class="skillbox"><span class="tag sp">SP</span><div><b>${escapeHtml(d.special.name)}</b><p>${escapeHtml(d.special.desc)}</p></div></div>
-        <div class="skillbox"><span class="tag" style="background:#ddd">通常</span><div><b>${d.attack.kind === 'melee' ? '近距離パンチ' : '遠距離ショット'}</b><p>${d.attack.kind === 'melee' ? '近づくと自動でパンチ。最後の一発でふっとばす' : 'はなれた敵を自動で撃つ（インクのたま）'}</p></div></div>`;
+        <div class="skillbox"><span class="tag" style="background:#ddd">通常</span><div><b>${escapeHtml(d.attack.label || (d.attack.kind === 'melee' ? '近距離パンチ' : '遠距離ショット'))}</b><p>${escapeHtml(d.attack.desc || (d.attack.kind === 'melee' ? '近づくと自動でパンチ。最後の一発でふっとばす' : 'はなれた敵を自動で撃つ（インクのたま）'))}</p></div></div>
+        ${d.passive ? `<div class="skillbox"><span class="tag pv">とくせい</span><div><b>${escapeHtml(d.passive.name)}</b><p>${escapeHtml(d.passive.desc)}</p></div></div>` : ''}
+        ${syn.map((x) => `<div class="skillbox"><span class="tag syn">相性</span><div><b>${escapeHtml(x.title)}</b><p>${escapeHtml(x.text)}</p></div></div>`).join('')}`;
     };
     render();
+    const list = $('.charlist', s);
+    const center = (smooth) => {
+      const b = $(`.charlist button[data-id="${cur}"]`, s);
+      if (b && list.scrollWidth > list.clientWidth) list.scrollTo({ left: b.offsetLeft - (list.clientWidth - b.offsetWidth) / 2, behavior: smooth ? 'smooth' : 'auto' });
+    };
+    requestAnimationFrame(() => center(false));
     $$('.charlist button', s).forEach((b) => (b.onclick = () => {
       cur = b.dataset.id;
       this.setLobbyChar(cur);
       render();
+      center(true);
+      info.scrollTop = 0;
       sound.play('ui');
     }));
     $('.back', s).onclick = () => this.showHome();
@@ -1211,7 +1282,7 @@ class App {
       `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>ディスク<small>${escapeHtml(PUNCHERS[charId].short || PUNCHERS[charId].name)}</small></h2></div>
        <div class="discstage"><div class="dsinfo"></div></div>
        <div class="dsbody">
-         <div class="card deckcard"><h3>セット中<span class="hint">左はしの属性で始まる</span></h3><div class="deck4"></div></div>
+         <div class="card deckcard"><h3>セット中<span class="hint">キャラの属性で始まる・下フリックで変える</span></h3><div class="deck4"></div></div>
          <div class="card omdetail"></div>
          <div class="card listcard"><h3>持っているディスク<span class="hint cnt"></span></h3><div class="omgrid"></div></div>
        </div>`,
@@ -1221,7 +1292,7 @@ class App {
     const card = (id, extra = '') => {
       const o = OMAMORI[id];
       const owned = !!S.om[id];
-      return `<button class="omcard ${extra} ${owned ? '' : 'locked'}" data-id="${id}" style="--e:${ELEM[o.elem].color};--k:${KIND_COLOR[o.kind]};--r:${RARE_COLOR[o.rare]}" aria-label="${escapeHtml(o.name)}"><div class="g"><img alt="" src="${this.portraits.monster(o.mon, 128)}"></div><span class="r">${o.rare}</span>${owned ? `<span class="lv">Lv${omLevel(S, id)}</span>` : `<span class="lk">${ICON.lock}</span>`}<span class="k">${o.kind}</span></button>`;
+      return `<button class="omcard ${extra} ${owned ? '' : 'locked'}" data-id="${id}" style="--e:${ELEM[o.elem].color};--k:${KIND_COLOR[o.kind]};--r:${RARE_COLOR[o.rare]}" aria-label="${escapeHtml(o.name)}"><div class="g"><img alt="" ${this.monImg(o.mon, 128)}></div><span class="r">${o.rare}</span>${owned ? `<span class="lv">Lv${omLevel(S, id)}</span>` : `<span class="lk">${ICON.lock}</span>`}<span class="k">${o.kind}</span></button>`;
     };
     const show = (id) => {
       const o = OMAMORI[id];
@@ -1236,6 +1307,7 @@ class App {
       const deck = S.decks[charId];
       deckEl.innerHTML = deck.map((id) => card(id, sel && sel === id ? 'sel' : '')).join('');
       grid.innerHTML = OMAMORI_IDS.map((id) => card(id, (deck.includes(id) ? 'inuse ' : '') + (sel === id ? 'sel' : ''))).join('');
+      this.fillImgs(s, sel && OMAMORI[sel] ? OMAMORI[sel].mon : null);
       $('.cnt', s).textContent = OMAMORI_IDS.filter((id) => S.om[id]).length + ' / ' + OMAMORI_IDS.length;
       $$('.deck4 .omcard', s).forEach((b, i) => (b.onclick = () => {
         if (sel && S.om[sel]) {
@@ -1298,10 +1370,11 @@ class App {
       ? r.list
           .map(
             (x, i) =>
-              `<div class="row rkrow" data-u="${tab === 'f' && !x.me && x.u ? escapeHtml(x.u) : ''}" data-n="${escapeHtml(x.n)}" style="padding:6px 2px;border-bottom:1px solid rgba(255,255,255,0.06);${x.me ? 'background:rgba(255,212,0,0.15);border-radius:8px' : ''}"><b style="width:28px;text-align:center;color:${i < 3 ? '#ffd400' : '#fff'}">${x.rank || i + 1}</b><img alt="" style="width:30px;height:30px;border-radius:8px" src="${this.portraits.get(PUNCHERS[x.c] ? x.c : 'tora', 0)}"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.n)}</span><b>${x.s}</b></div>`
+              `<div class="row rkrow" data-u="${tab === 'f' && !x.me && x.u ? escapeHtml(x.u) : ''}" data-n="${escapeHtml(x.n)}" style="padding:6px 2px;border-bottom:1px solid rgba(255,255,255,0.06);${x.me ? 'background:rgba(255,212,0,0.15);border-radius:8px' : ''}"><b style="width:28px;text-align:center;color:${i < 3 ? '#ffd400' : '#fff'}">${x.rank || i + 1}</b><img alt="" style="width:30px;height:30px;border-radius:8px" ${this.porImg(PUNCHERS[x.c] ? x.c : 'tora', 0)}><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.n)}</span><b>${x.s}</b></div>`
           )
           .join('')
       : '<p class="note">まだだれもいません。一番乗りしよう！</p>';
+    this.fillImgs(list);
     if (tab === 'f')
       $$('.rkrow', list).forEach((row) => {
         if (!row.dataset.u) return;
@@ -1363,7 +1436,7 @@ class App {
       const two = st.scheme !== 'one';
       schB.forEach((b) => b.classList.toggle('on', b.dataset.s === (two ? 'two' : 'one')));
       schNote.innerHTML = two
-        ? '左の親指：長押しで飛ぶ・スライドで旋回・フリック<br>右の親指：なぞって視点を動かす・タップでブースト'
+        ? '左の親指：アクセル（長押しで飛ぶ・はなすと止まる）・フリック<br>右の親指：なぞって視点を動かす・タップでブースト'
         : '画面のどこでも：長押しで飛ぶ・スライドで旋回・フリック・タップ（キックフライトと同じ）';
       lookF.style.display = two ? '' : 'none';
     };
@@ -1475,9 +1548,8 @@ class App {
   showHowto() {
     const two = this.settings.scheme !== 'one';
     const rows = two
-      ? `<b>左で長押し</b><span>前へ飛ぶ（地面では走る）。離すとその場で止まる</span>
+      ? `<b>左で長押し</b><span>アクセル。前へ飛ぶ（地面では走る）。離すとその場で止まる。左の指をすべらせても向きは変わらない</span>
         <b>右でなぞる</b><span>視点（向き）を動かす。飛びながらでも、止まっていても。飛ぶ方向もこれで決まる</span>
-        <b>左で長押し＋スライド</b><span>スティックでも旋回できる（押した所にスティックが出る）</span>
         <b>タップ</b><span>ブーストダッシュ（黄色いゲージを1つ使う。左右どちらの親指でも）。そのあとは自動で飛び続ける</span>
         <b>フリック</b><span>回避・ブレーキ・ターンのフリックは左の親指で（右でなぞると視点になる）</span>`
       : `<b>長押し</b><span>前へ飛ぶ（地面では走る）。離すとその場で止まる</span>
@@ -1496,7 +1568,7 @@ class App {
         <b>下フリック</b><span>止まっているとき：バックステップ／飛んでいるとき：急ブレーキ</span>
         <b>上→下フリック</b><span>くるっと180度ターン（ロックオンは外れる）</span>
         <b>右のアイコン</b><span>タップでその敵をロックオン。近づくと自動でパンチ</span>
-        <b>下のアイコン</b><span>上フリックでスキル（ディスクはモンスターが出て技を出す。溜め中に攻撃されると割れる）。ディスクを下フリックで属性を変える</span>
+        <b>下のアイコン</b><span>上フリックでスキル（ディスクは先生・ごはん・犬などが出て技を出す。溜め中に攻撃されると割れる）。ディスクを下フリックで属性を変える</span>
         <b>SPボタン</b><span>ゲージが満タンでスペシャル</span>
         <b>ロック中タップ</b><span>ダッシュ攻撃（ゲージ2つ）。相手の溜めをつぶせる</span>
       </div>
@@ -1526,6 +1598,7 @@ class App {
       deck,
       deckLv: deck.map((id) => omLevel(S, id)),
       friends: (this.friendList || []).slice(),
+      teams: this.testTeams || null, // テスト用（ふだんは null）
     });
     this.match.resize(this.viewW, this.viewH);
     if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);

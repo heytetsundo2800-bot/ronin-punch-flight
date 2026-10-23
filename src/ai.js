@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { MOVE, COMBAT } from './config.js';
 import { OMAMORI } from './characters.js';
 import { clamp, wrapAngle, rand } from './util.js';
+import { aiWantsKS, aiWantsSP } from './kits.js';
 
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
@@ -270,21 +271,39 @@ export class Brain {
     const target = p.lock && p.lock.alive ? p.lock : null;
     const td = target ? target.pos.distanceTo(p.pos) : 1e9;
     // スペシャル
-    if (p.sp >= 1) {
-      let n = 0;
-      for (const e of enemies) if (e.pos.distanceTo(p.pos) < 13) n++;
-      const id = p.def.special.id;
-      if ((id === 'roar' && n >= 1) || (id === 'bigEven' && n >= 1 && nd < 9) || (id === 'glassesOff' && (n >= 2 || (n >= 1 && hpLow)))) {
-        ev.push({ type: 'special' });
-        this.skillCd = 1.5;
-        return;
-      }
+    // （使いどころはキャラごとのヒント：characters.js の special.ai／kits.js）
+    if (p.sp >= 1 && aiWantsSP(this.m, p, enemies, hpLow)) {
+      ev.push({ type: 'special' });
+      this.skillCd = 1.5;
+      return;
+    }
+    // パンチャースキル（キャラごとのヒント：characters.js の skill.ai／kits.js）。ディスクより先に使うことも多い
+    const ksOk = p.ksCd <= 0 && aiWantsKS(this.m, p, target, td, hpLow);
+    if (ksOk && Math.random() < 0.6) {
+      ev.push({ type: 'skill', slot: 2 });
+      this.skillCd = 1.0;
+      return;
     }
     // 回復
     for (let i = 0; i < p.omamori.length; i++) {
       const om = OMAMORI[p.omamori[i]];
       if (p.omCd[i] > 0) continue;
       const slot = i < 2 ? i : i + 1;
+      // 攻撃にも使えるムーブ（スクリュー先生＝すぐ近くの敵を打ち上げる、ブック＝ねらった敵へ突進）
+      if (om.id === 'screw' || om.id === 'book') {
+        if ((om.id === 'screw' && near && nd < 5) || (om.id === 'book' && target && td > 3 && td < 15)) {
+          ev.push({ type: 'skill', slot });
+          this.skillCd = 1.2;
+          return;
+        }
+        continue;
+      }
+      // 駅で助ける先生：自分か近くの味方がピンチ
+      if (om.id === 'eki' && (hpLow || this.m.punchers.some((a) => a.team === p.team && a.alive && a !== p && a.hp < a.maxHp * 0.35 && a.pos.distanceTo(p.pos) < 30))) {
+        ev.push({ type: 'skill', slot });
+        this.skillCd = 1.2;
+        return;
+      }
       if (om.kind === 'HEAL' && hpLow) {
         ev.push({ type: 'skill', slot });
         this.skillCd = 1.2;
@@ -317,13 +336,10 @@ export class Brain {
       }
     }
     // パンチャースキル
-    if (p.ksCd <= 0 && target) {
-      const id = p.def.skill.id;
-      if ((id === 'tigerRush' && td < 10) || (id === 'goggleDive' && td < 16 && td > 3) || (id === 'flash' && td < 13)) {
-        ev.push({ type: 'skill', slot: 2 });
-        this.skillCd = 1.0;
-        return;
-      }
+    if (ksOk) {
+      ev.push({ type: 'skill', slot: 2 });
+      this.skillCd = 1.0;
+      return;
     }
     this.skillCd = rand(0.4, 1.0);
   }
@@ -512,7 +528,7 @@ Brain.prototype.escape = function () {
 export function assignRoles(team) {
   // スピード→集める、アタック→落とす、サポート→守る。かぶったら順番に
   const roles = [];
-  const want = { speed: 'collector', attack: 'dropper', support: 'support' };
+  const want = { speed: 'collector', attack: 'dropper', support: 'support', power: 'dropper' };
   const left = ['collector', 'dropper', 'support', 'collector'];
   for (const p of team) {
     let r = want[p.def.type];

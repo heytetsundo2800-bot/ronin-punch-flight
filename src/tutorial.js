@@ -2,7 +2,6 @@
 import * as THREE from 'three';
 import { ICON } from './icons.js';
 import { Match } from './match.js';
-import { PUNCHER_IDS } from './characters.js';
 import { el, $ } from './util.js';
 import { sound } from './audio.js';
 import { saveSave } from './save.js';
@@ -10,7 +9,7 @@ import { saveSave } from './save.js';
 const STEPS = [
   // two：両手の操作（左の親指で移動・右の親指で視点）のときの文
   { id: 'dash', label: '移動', msg: 'まずは加速の基本。<em>タップ</em>でブーストダッシュしよう！<br><small>黄色いゲージを1つ使う。時間で回復するよ</small>', two: 'まずは加速の基本。<em>タップ</em>でブーストダッシュしよう！<br><small>左右どちらの親指でもOK。黄色いゲージを1つ使う</small>', need: 3, hint: 'center' },
-  { id: 'fly', label: '移動', msg: '<em>長押し</em>で飛び続けよう！<br>押したまま<em>指をスライド</em>すると旋回できる', two: '<em>左の親指で長押し</em>して飛び続けよう！<br>飛ぶ向きは<em>右の親指でなぞって</em>変えられる', need: 60, unit: 'm', hint: 'hold' },
+  { id: 'fly', label: '移動', msg: '<em>長押し</em>で飛び続けよう！<br>押したまま<em>指をスライド</em>すると旋回できる', two: '<em>左の親指で長押し</em>して飛び続けよう！（左はアクセル。はなすと止まる）<br>飛ぶ向きは<em>右の親指でなぞって</em>変えられる', need: 60, unit: 'm', hint: 'hold' },
   { id: 'look', label: '移動', msg: '止まっているときは<em>指をすべらせたまま</em>（はなさずに）動かすと、その場で向きを変えられる<br><small>すばやく動かして離すとステップ（回避）になるよ</small>', two: '<em>右の親指で画面をなぞる</em>と、視点（向き）がぐるっと動く！<br><small>飛びながらでも、止まっていても使えるよ</small>', need: 180, unit: '°', hint: 'swipe' },
   { id: 'brake', label: '移動', msg: '飛んでいるときに<em>下フリック</em>で急ブレーキ！<br><small>（止まっているときはバックステップ）</small>', two: '飛んでいるときに<em>左の親指で下フリック</em>で急ブレーキ！<br><small>（止まっているときはバックステップ）</small>', need: 2, hint: 'down' },
   { id: 'step', label: '移動', msg: '止まっているときに<em>横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', two: '止まっているときに<em>左の親指で横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', need: 2, hint: 'side' },
@@ -18,7 +17,7 @@ const STEPS = [
   { id: 'collect', label: 'スクランブル', msg: '移動を使いこなして<em>サクラ</em>を集めよう！<br><small>近くを通るだけで取れる。持つほど遅くなる</small>', need: 6, hint: null },
   { id: 'deposit', label: 'スクランブル', msg: '青いダルマに近づいて、右下の<em>「預ける」を長押し</em>！<br><small>預けたサクラは倒されてもなくならない</small>', need: 4, hint: 'deposit' },
   { id: 'attack', label: '攻撃', msg: '敵があらわれた！右の<em>顔アイコンをタップ</em>でロックオン。<br>近づくと<em>自動でパンチ</em>するよ', need: 4, hint: 'lock' },
-  { id: 'om', label: '攻撃', msg: '下の<em>ディスクを上にフリック</em>して、モンスターの技を出そう！', need: 1, hint: 'om' },
+  { id: 'om', label: '攻撃', msg: '下の<em>ディスクを上にフリック</em>して、ディスクの技を出そう！（先生やラーメンが出てくる）', need: 1, hint: 'om' },
   { id: 'ks', label: '攻撃', msg: 'まん中の<em>顔のアイコンを上にフリック</em>！パンチャースキル', need: 1, hint: 'ks' },
   { id: 'sp', label: '攻撃', msg: '最後に、戦況を一気に変える<em>スペシャル</em>！<br>光っている<em>SPボタン</em>をタップ', need: 1, hint: 'sp' },
 ];
@@ -61,7 +60,8 @@ export class Tutorial extends Match {
     this.prev = this.snapshot();
     // 攻撃の練習で敵を出す
     if (S.id === 'attack' && !this.enemy) {
-      const id = PUNCHER_IDS.find((x) => x !== this.opts.char) || 'tora';
+      // 練習の相手は、はじめからいる3人から（新しい仲間は強さがいろいろなので）
+      const id = ['tora', 'even', 'aomachi'].find((x) => x !== this.opts.char) || 'tora';
       this.enemy = this.addPuncher(id, 1, 0, null);
       // 自分の前に出す
       const P = this.player;

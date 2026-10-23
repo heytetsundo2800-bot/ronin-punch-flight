@@ -160,11 +160,44 @@ const addMat = (key, color, op = 1) =>
     if (op < 1) mt.blending = THREE.AdditiveBlending;
     return mt;
   });
-// モンスターの技の弾（前が +Z）
+// 文字の板（英語の文字・音符など）。同じ文字は使い回す
+const textSprite = (key, text, color, size = 1, font = '900 92px sans-serif', stroke = '#0a0d18') => {
+  const mat = pcache('tsM_' + key, () => {
+    const t = canvasTex(128, 128, (ctx, w, h) => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.font = font;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 12;
+      ctx.strokeStyle = stroke;
+      ctx.strokeText(text, w / 2, h / 2 + 4);
+      ctx.fillStyle = color;
+      ctx.fillText(text, w / 2, h / 2 + 4);
+    });
+    t.userData.shared = true;
+    return new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false });
+  });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(size, size, 1);
+  return sp;
+};
+// ディスクの技の弾（前が +Z）
 function projTemplate(k) {
   const m = new THREE.Group();
   if (k === 'akahon') {
-    // ブレイズドレイク：追いかける火の玉
+    // 革ジャンの先生のパワーコード：追いかける音の火の玉（まわりに音の輪と音符）
+    for (let i = 0; i < 2; i++) {
+      const r = new THREE.Mesh(pcache('pcR', () => new THREE.TorusGeometry(0.85, 0.06, 6, 28)), addMat('pcRM', 0xffd27a, 0.75));
+      r.position.z = 0.2 - i * 0.55;
+      r.scale.setScalar(1 - i * 0.22);
+      m.add(r);
+    }
+    const n1 = textSprite('note8', '♪', '#ffe27a', 0.9);
+    n1.position.set(0.75, 0.55, -0.2);
+    m.add(n1);
+    const n2 = textSprite('note16', '♫', '#ffb04a', 0.8);
+    n2.position.set(-0.75, 0.35, -0.5);
+    m.add(n2);
     m.add(new THREE.Mesh(pcache('fbCore', () => new THREE.IcosahedronGeometry(0.42, 1)), addMat('fbCoreM', 0xfff0a0)));
     const shell = new THREE.Mesh(pcache('fbShell', () => new THREE.IcosahedronGeometry(0.62, 1)), addMat('fbShellM', 0xff6a1a, 0.55));
     m.add(shell);
@@ -175,48 +208,208 @@ function projTemplate(k) {
     addSpr(m, 'fbS', 0xff7a2a, 3.4, 0.75);
     m.userData.trail = 0xff8a2a;
   } else if (k === 'tangocho') {
-    // ゲイルファルコン：回るかまいたち（三日月の刃）
-    const crescent = pcache('wbG', () => {
-      const s = new THREE.Shape();
-      s.absarc(0, 0, 1.0, 0.25 * Math.PI, 1.75 * Math.PI, false);
-      s.absarc(0.38, 0, 0.78, 1.6 * Math.PI, 0.4 * Math.PI, true);
-      const g = new THREE.ShapeGeometry(s, 16);
-      g.rotateX(-Math.PI / 2);
-      return g;
-    });
-    const mat = pcache('wbM', () => new THREE.MeshBasicMaterial({ color: 0xd8ffb0, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
-    for (let i = 0; i < 2; i++) {
-      const b = new THREE.Mesh(crescent, mat);
-      b.rotation.y = i * Math.PI;
-      b.scale.setScalar(0.85);
-      m.add(b);
+    // でっかい英語の先生：大声の英語（A・B・C・!）が輪になって回る
+    const L = ['A', 'B', 'C', '!'];
+    const cols = ['#e8ffcf', '#c9ff8a', '#ffffff', '#ffe27a'];
+    for (let i = 0; i < 4; i++) {
+      const sp = textSprite('en' + L[i], L[i], cols[i], 1.15);
+      const a = (i / 4) * Math.PI * 2;
+      sp.position.set(Math.cos(a) * 0.85, Math.sin(i * 1.7) * 0.15, Math.sin(a) * 0.85);
+      m.add(sp);
     }
-    addSpr(m, 'wbS', 0x9dff4a, 2.6, 0.6);
+    const ring = new THREE.Mesh(pcache('enR', () => new THREE.TorusGeometry(0.85, 0.05, 6, 32)), addMat('enRM', 0x9dff4a, 0.55));
+    ring.rotation.x = Math.PI / 2;
+    m.add(ring);
+    addSpr(m, 'wbS', 0x9dff4a, 2.6, 0.55);
     m.userData.trail = 0x9dff4a;
   } else if (k === 'pencil') {
-    // ランスナーヴァル：まっすぐ速い水の槍
-    const lance = new THREE.Mesh(pcache('alG', () => new THREE.ConeGeometry(0.2, 2.0, 10)), addMat('alM', 0xdaf8ff));
-    lance.rotation.x = Math.PI / 2;
-    lance.position.z = 0.3;
-    m.add(lance);
-    const sheath = new THREE.Mesh(pcache('alG2', () => new THREE.ConeGeometry(0.36, 2.6, 12, 1, true)), addMat('alM2', 0x3be6ff, 0.45));
-    sheath.rotation.x = Math.PI / 2;
-    sheath.position.z = 0.05;
-    m.add(sheath);
-    for (let i = 0; i < 3; i++) {
-      const r = new THREE.Mesh(pcache('alR', () => new THREE.TorusGeometry(0.34, 0.035, 6, 24)), addMat('alRM', 0x9af6ff, 0.8));
-      r.position.z = -0.4 - i * 0.45;
-      r.scale.setScalar(1 + i * 0.25);
+    // 学食カレー：スプーンにのった熱々のカレー（ルー・ごはん・湯気の光）
+    const roux = new THREE.Mesh(pcache('cuRoux', () => new THREE.IcosahedronGeometry(0.42, 1)), pcache('cuRouxM', () => toon(0xc4691c, { rim: 0.5, rimColor: 0xffb04a })));
+    roux.scale.set(1.15, 0.8, 1.25);
+    roux.position.z = 0.15;
+    m.add(roux);
+    const rice = new THREE.Mesh(pcache('cuRice', () => new THREE.IcosahedronGeometry(0.3, 1)), pcache('cuRiceM', () => toon(0xfffbf0, { rim: 0.3 })));
+    rice.position.set(0.26, 0.12, -0.12);
+    m.add(rice);
+    const spoon = new THREE.Mesh(pcache('cuSp', () => new THREE.CylinderGeometry(0.05, 0.07, 1.3, 6)), pcache('cuSpM', () => toon(0xd8dde6, { rim: 0.6 })));
+    spoon.rotation.x = Math.PI / 2;
+    spoon.position.z = -0.75;
+    m.add(spoon);
+    addSpr(m, 'cuS', 0xff8a2a, 2.2, 0.7);
+    m.userData.trail = 0xffa04a;
+  } else if (k === 'cookie') {
+    // うんち出る出るクッキー：手作りの丸いクッキー（顔つき・チョコチップ）
+    const c = new THREE.Mesh(pcache('ckG', () => new THREE.CylinderGeometry(0.62, 0.62, 0.22, 18)), pcache('ckM', () => toon(0xd9a15a, { rim: 0.4, rimColor: 0xfff0c0 })));
+    c.rotation.x = Math.PI / 2;
+    m.add(c);
+    const chip = pcache('ckChip', () => new THREE.IcosahedronGeometry(0.08, 0));
+    const chipM = pcache('ckChipM', () => toon(0x5a3518, { rim: 0.1 }));
+    for (const [x, y] of [[-0.3, 0.25], [0.32, 0.2], [0.05, -0.32], [-0.22, -0.12], [0.3, -0.2]]) {
+      const d = new THREE.Mesh(chip, chipM);
+      d.position.set(x, y, 0.12);
+      m.add(d);
+    }
+    const face = textSprite('ckFace', '・ω・', '#5a3518', 0.9, '900 46px sans-serif', 'rgba(0,0,0,0)');
+    face.position.z = 0.2;
+    m.add(face);
+    addSpr(m, 'ckS', 0xffd28a, 1.8, 0.45);
+    m.userData.trail = 0xd9a15a;
+  } else if (k === 'voice') {
+    // エブンの歌声：炎の色の音の輪（2重）と音符の光
+    for (let i = 0; i < 2; i++) {
+      const r = new THREE.Mesh(pcache('vcR', () => new THREE.TorusGeometry(0.5, 0.07, 6, 26)), addMat('vcRM' + i, i ? 0xffd27a : 0xff6a2a, 0.85));
+      r.position.z = -i * 0.35;
+      r.scale.setScalar(1 - i * 0.25);
       m.add(r);
     }
-    addSpr(m, 'alS', 0x3be6ff, 2.4, 0.7, 0.6);
-    m.userData.trail = 0x6ad8ff;
+    addSpr(m, 'vcS', 0xff7a3a, 2.2, 0.7);
+    m.userData.trail = 0xffa04a;
+  } else if (k === 'vomit') {
+    // コーダイのゲロ：黄緑のかたまり＋しぶき
+    m.add(new THREE.Mesh(pcache('vmG', () => new THREE.IcosahedronGeometry(0.42, 1)), pcache('vmM', () => toon(0xc9d14a, { rim: 0.3 }))));
+    for (let i = 0; i < 3; i++) {
+      const b = new THREE.Mesh(pcache('vmG2', () => new THREE.IcosahedronGeometry(0.2, 0)), pcache('vmM2', () => toon(0xe8d27a, { rim: 0.2 })));
+      b.position.set(Math.cos(i * 2.1) * 0.38, Math.sin(i * 2.1) * 0.3, -0.25);
+      m.add(b);
+    }
+    m.userData.trail = 0xc9d14a;
+  } else if (k === 'phone') {
+    // まなの着信：光るスマホ
+    const body = new THREE.Mesh(pcache('phG', () => new THREE.BoxGeometry(0.34, 0.6, 0.08)), pcache('phM', () => toon(0x1d2230, { rim: 0.5 })));
+    m.add(body);
+    const scr = new THREE.Mesh(pcache('phSG', () => new THREE.PlaneGeometry(0.28, 0.48)), addMat('phSM', 0x7dffb0, 0.95));
+    scr.position.z = 0.045;
+    m.add(scr);
+    addSpr(m, 'phS', 0x7dffb0, 1.8, 0.7);
+    m.userData.trail = 0x9dffcf;
+  } else if (k === 'ball') {
+    // こうせいのバスケのボール
+    const b = new THREE.Mesh(pcache('bbG', () => new THREE.SphereGeometry(0.42, 16, 12)), pcache('bbM', () => toon(0xff7a1f, { rim: 0.4 })));
+    m.add(b);
+    for (let i = 0; i < 2; i++) {
+      const line = new THREE.Mesh(pcache('bbL', () => new THREE.TorusGeometry(0.425, 0.018, 4, 24)), pcache('bbLM', () => new THREE.MeshBasicMaterial({ color: 0x2a160a })));
+      line.rotation.y = i * Math.PI / 2;
+      m.add(line);
+    }
+    m.userData.trail = 0xffa04a;
+  } else if (k === 'water' || k === 'ice') {
+    // みのりの水・こうたのアイスフラペ（水色のしずく／カップ）
+    if (k === 'ice') {
+      const cup = new THREE.Mesh(pcache('icG', () => new THREE.CylinderGeometry(0.26, 0.2, 0.55, 12)), pcache('icM', () => toon(0xeaf6ff, { rim: 0.6, rimColor: 0x9af6ff })));
+      cup.rotation.x = Math.PI / 2;
+      m.add(cup);
+      const lid = new THREE.Mesh(pcache('icL', () => new THREE.SphereGeometry(0.27, 12, 6, 0, 6.3, 0, 1.6)), pcache('icLM', () => toon(0xffffff, { rim: 0.4 })));
+      lid.rotation.x = Math.PI / 2;
+      lid.position.z = 0.27;
+      m.add(lid);
+      addSpr(m, 'icS', 0x9af6ff, 1.8, 0.6);
+    } else {
+      const d = new THREE.Mesh(pcache('wtG', () => new THREE.SphereGeometry(0.3, 12, 10)), addMat('wtM', 0x6ad8ff, 0.85));
+      d.scale.set(1, 1, 1.6);
+      m.add(d);
+      addSpr(m, 'wtS', 0x3be6ff, 1.6, 0.7);
+    }
+    m.userData.trail = 0x9af6ff;
+  } else if (k === 'sneeze' || k === 'gust') {
+    // ちじわのくしゃみ（みどりのもや）・あやなの風
+    const c = k === 'sneeze' ? 0xb8e05a : 0x8dffb0;
+    for (let i = 0; i < 3; i++) {
+      const b = new THREE.Mesh(pcache('snG', () => new THREE.IcosahedronGeometry(0.32, 1)), addMat('snM' + k, c, 0.55));
+      b.position.set(Math.cos(i * 2.1) * 0.25, Math.sin(i * 2.1) * 0.25, -i * 0.18);
+      m.add(b);
+    }
+    addSpr(m, 'snS' + k, c, 2.0, 0.6);
+    m.userData.trail = c;
   }
   return m;
 }
+const KIT_PROJ = new Set(['voice', 'vomit', 'phone', 'ball', 'water', 'ice', 'sneeze', 'gust', 'cookie']);
 // ロビー（ディスク画面）用：技の弾の見た目だけ
 export function projectileLook(kind) {
   return pcache('tpl_' + kind, () => projTemplate(kind)).clone();
+}
+// わなの地面の絵（油・欠席スタンプ・単位の紙）。種類ごとに1枚
+const trapTexCache = {};
+function trapTex(kind) {
+  if (trapTexCache[kind]) return trapTexCache[kind];
+  const t = canvasTex(256, 256, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2;
+    if (kind === 'oil') {
+      // てかてかの油と、麺
+      const g = ctx.createRadialGradient(cx, cy, 10, cx, cy, 124);
+      g.addColorStop(0, 'rgba(255,200,90,0.95)');
+      g.addColorStop(0.7, 'rgba(200,120,30,0.85)');
+      g.addColorStop(1, 'rgba(160,90,20,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 124, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,236,160,0.9)';
+      ctx.lineWidth = 7;
+      for (let i = 0; i < 7; i++) {
+        ctx.beginPath();
+        const r0 = 30 + i * 11;
+        ctx.arc(cx + Math.sin(i) * 8, cy + Math.cos(i * 1.3) * 8, r0, i * 0.9, i * 0.9 + 2.2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      for (const [x, y, r] of [[90, 80, 14], [170, 110, 9], [120, 170, 11], [80, 150, 6]]) {
+        ctx.beginPath();
+        ctx.ellipse(x, y, r * 1.8, r, -0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (kind === 'stamp') {
+      // 赤い「欠席」のはんこ
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 124, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#e8262f';
+      ctx.lineWidth = 16;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 100, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 80, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#e8262f';
+      ctx.font = '900 76px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('欠席', cx, cy + 4);
+    } else {
+      // 「単位」の紙（にこにこ）
+      ctx.fillStyle = 'rgba(122,208,255,0.22)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 124, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(-0.12);
+      ctx.fillStyle = '#fffdf4';
+      ctx.fillRect(-78, -96, 156, 192);
+      ctx.strokeStyle = '#c9a34a';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(-70, -88, 140, 176);
+      ctx.fillStyle = '#2a2f44';
+      ctx.font = '900 54px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('単位', 0, -28);
+      ctx.font = '800 22px sans-serif';
+      ctx.fillText('あげるよ♪', 0, 22);
+      ctx.fillStyle = '#e8262f';
+      ctx.beginPath();
+      ctx.arc(40, 62, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  });
+  t.userData.shared = true;
+  trapTexCache[kind] = t;
+  return t;
 }
 // 方眼の結界（グリッドオクトパス）
 const gridTexCache = {};
@@ -309,6 +502,8 @@ export class FX {
         this.parts.emit(p.pos.x + Math.cos(a) * 1.5, p.pos.y - 0.6, p.pos.z + Math.sin(a) * 1.5, -Math.cos(a) * 2, 3, -Math.sin(a) * 2, 0.45, 0.7, 0.1, c, 1);
       }
     }
+    // v1.5 の仲間の技（ブレス・ビーム・小道具・状態のオーラ）
+    this.updateKit(dt);
     // 光・けむり・擬音・帯をまとめて動かして書きこむ（波紋の輪もここ）
     V.update(dt, cam, this.time);
     // 数字・ことば（画面の位置を毎フレーム計算）
@@ -334,6 +529,8 @@ export class FX {
 
   // ===== 数字 =====
   num(pos, text, cls, life = 0.9, rise = 1.4) {
+    // 少しおくれて出す字（setTimeout）が、試合を出たあとに残らないように
+    if (this.match && this.match.running === false) return;
     if (this.nums.length > 40) {
       const old = this.nums.shift();
       old.el.remove();
@@ -918,8 +1115,9 @@ export class FX {
       const glow = new THREE.Sprite(pcache('inkS2' + team, () => new THREE.SpriteMaterial({ map: glowTex(), color: new THREE.Color(TEAM[team].hex).multiplyScalar(1.5), transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending })));
       glow.scale.set(1.15, 1.15, 1);
       m.add(glow);
-    } else if (k === 'akahon' || k === 'tangocho' || k === 'pencil') {
+    } else if (k === 'akahon' || k === 'tangocho' || k === 'pencil' || KIT_PROJ.has(k)) {
       m = pcache('tpl_' + k, () => projTemplate(k)).clone();
+      if (o.big) m.scale.setScalar(1.4);
     } else if (k === 'guardianShot') {
       const team = o.team || 0;
       m = new THREE.Sprite(pcache('gsS' + team, () => new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[team].hex, transparent: true, opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending })));
@@ -935,17 +1133,54 @@ export class FX {
   areaMesh(a) {
     const g = new THREE.Group();
     if (a.kind === 'mine') {
-      // ボムビートルがうずくまって待つ
-      const b = buildMonster('beetle');
-      b.scale.setScalar(0.5);
-      // 小さいので、ふちどりは描かない（描く数をへらす）
-      b.traverse((o) => o.name === 'outline' && (o.visible = false));
-      b.rotation.y = rand(0, 6.28);
+      // 爆弾のわな（いまのディスクでは使っていない。古い版の部屋との互換のため残す）
+      const b = new THREE.Mesh(pcache('mineG', () => new THREE.IcosahedronGeometry(0.45, 1)), pcache('mineM', () => toon(0x2a2f3c, { rim: 0.6, rimColor: 0xff5a3d })));
       g.add(b);
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: TEAM[a.team].hex, transparent: true, opacity: 0.8, depthWrite: false }));
       glow.scale.set(2.8, 2.8, 1);
       g.add(glow);
       g.userData.blink = glow;
+    } else if (a.kind === 'noodle') {
+      // ちじわの、のびのびカップ麺（ぶよぶよの麺のうず）
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(a.r, 40), new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide }));
+      disc.rotation.x = -Math.PI / 2;
+      g.add(disc);
+      const nm = toon(0xffd25a, { rim: 0.3 });
+      for (let i = 0; i < 9; i++) {
+        const tor = new THREE.Mesh(new THREE.TorusGeometry(a.r * (0.25 + i * 0.08), 0.12, 6, 28, 4.2), nm);
+        tor.rotation.set(-Math.PI / 2, 0, i * 1.3);
+        tor.position.y = 0.05 + (i % 3) * 0.06;
+        g.add(tor);
+      }
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.38, 0.8, 14), toon(0xf4f2ea, { rim: 0.3 }));
+      cup.position.set(0.6, 0.4, 0.3);
+      cup.rotation.z = 1.2;
+      g.add(cup);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(a.r - 0.3, a.r, 48), new THREE.MeshBasicMaterial({ color: TEAM[a.team].hex, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2;
+      g.add(ring);
+    } else if (a.kind === 'oil' || a.kind === 'stamp' || a.kind === 'tani') {
+      // 油そばの油・欠席スタンプ・単位の紙（地面にはる絵＋チームの色の輪）
+      const tex = trapTex(a.kind);
+      const plate = new THREE.Mesh(new THREE.CircleGeometry(a.r, 40), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: a.kind === 'oil' ? 0.85 : 0.95, depthWrite: false, side: THREE.DoubleSide }));
+      plate.rotation.x = -Math.PI / 2;
+      plate.position.y = 0.04;
+      g.add(plate);
+      const ring = new THREE.Mesh(new THREE.RingGeometry(a.r - 0.25, a.r, 48), new THREE.MeshBasicMaterial({ color: TEAM[a.team].hex, transparent: true, opacity: 0.75, side: THREE.DoubleSide }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.06;
+      g.add(ring);
+      if (a.kind !== 'oil') {
+        // 上でふわふわ光る目印（遠くからでも見える）
+        const mark = textSprite('trap_' + a.kind, a.kind === 'stamp' ? '欠' : '単', a.kind === 'stamp' ? '#ff4a4a' : '#7ad0ff', 1.6);
+        mark.position.y = 1.6;
+        g.add(mark);
+      } else {
+        const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex(), color: 0xffc04a, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }));
+        gl.scale.set(a.r * 1.6, a.r * 0.6, 1);
+        gl.position.y = 0.4;
+        g.add(gl);
+      }
     } else {
       const disc = new THREE.Mesh(new THREE.CircleGeometry(a.r, 40), new THREE.MeshBasicMaterial({ color: TEAM[a.team].hex, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }));
       disc.rotation.x = -Math.PI / 2;
@@ -966,6 +1201,7 @@ export class FX {
   }
 
   clear() {
+    this.clearKit();
     for (const s of [...this.summons.values(), ...this.leaving]) this.removeSummon(s);
     for (const q of this.shards) this.scene.remove(q.m);
     this.shards.length = 0;
@@ -992,3 +1228,297 @@ export class FX {
     disposeDeep(mesh);
   }
 }
+
+// ===== v1.5：仲間の技のえフェクト（ことば・ブレス・ビーム・チャリ・ドラム・電話・状態のオーラ）=====
+const KUP = new THREE.Vector3(0, 1, 0);
+const kitMat = (key, color, op = 0.9) => pcache(key, () => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+const kitToon = (key, color) => pcache(key, () => toon(color, { rim: 0.4 }));
+// 状態ごとの、ときどき出す ことば
+const STATUS_WORD = [
+  [1, 'ムカッ', 'rage'],
+  [2, 'ヒック', 'drunk'],
+  [4, 'ギュルル', 'poop'],
+  [8, 'Zzz', 'sleep'],
+  [32, 'くさっ', 'stink'],
+  [64, '弱点', 'judge'],
+  [128, '♥', 'heart'],
+];
+function bikeMesh() {
+  // はやたのチャリ（車輪2つ・フレーム・ハンドル）
+  const g = new THREE.Group();
+  const tire = pcache('bkTire', () => new THREE.TorusGeometry(0.36, 0.05, 6, 22));
+  const tm = kitToon('bkTireM', 0x1d1f26);
+  const fm = kitToon('bkFrameM', 0x2fbf7a);
+  for (const z of [-0.55, 0.55]) {
+    const w = new THREE.Mesh(tire, tm);
+    w.rotation.y = Math.PI / 2;
+    w.position.set(0, -0.9, z);
+    g.add(w);
+  }
+  const bar = pcache('bkBar', () => new THREE.CylinderGeometry(0.035, 0.035, 1.1, 6));
+  const top = new THREE.Mesh(bar, fm);
+  top.rotation.x = Math.PI / 2;
+  top.position.set(0, -0.62, 0);
+  g.add(top);
+  const down = new THREE.Mesh(bar, fm);
+  down.rotation.x = Math.PI / 2 - 0.7;
+  down.position.set(0, -0.78, 0.18);
+  g.add(down);
+  const fork = new THREE.Mesh(bar, fm);
+  fork.scale.y = 0.55;
+  fork.rotation.x = -0.35;
+  fork.position.set(0, -0.62, 0.5);
+  g.add(fork);
+  const handle = new THREE.Mesh(bar, tm);
+  handle.scale.y = 0.55;
+  handle.rotation.z = Math.PI / 2;
+  handle.position.set(0, -0.32, 0.42);
+  g.add(handle);
+  return g;
+}
+function drumMesh() {
+  // てつんどのドラム（バスドラ・スネア・シンバル）
+  const g = new THREE.Group();
+  const shell = kitToon('drShellM', 0xd8402a);
+  const head = kitToon('drHeadM', 0xf4f2ea);
+  const metal = kitToon('drMetalM', 0xe8c15a);
+  const bass = new THREE.Mesh(pcache('drBass', () => new THREE.CylinderGeometry(0.55, 0.55, 0.42, 20)), shell);
+  bass.rotation.x = Math.PI / 2;
+  bass.position.set(0, -0.6, 0.9);
+  g.add(bass);
+  const face = new THREE.Mesh(pcache('drFace', () => new THREE.CircleGeometry(0.5, 20)), head);
+  face.position.set(0, -0.6, 1.12);
+  g.add(face);
+  const snare = new THREE.Mesh(pcache('drSnare', () => new THREE.CylinderGeometry(0.3, 0.3, 0.18, 16)), shell);
+  snare.position.set(-0.55, -0.15, 0.7);
+  g.add(snare);
+  const cym = new THREE.Mesh(pcache('drCym', () => new THREE.ConeGeometry(0.42, 0.06, 18)), metal);
+  cym.position.set(0.6, 0.45, 0.7);
+  cym.rotation.z = 0.25;
+  g.add(cym);
+  g.userData.cym = cym;
+  return g;
+}
+function phoneSprite() {
+  const t = pcache('phTex', () => canvasTex(128, 128, (ctx) => {
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.fillStyle = '#1d2230';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(36, 14, 56, 100, 12) : ctx.rect(36, 14, 56, 100);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#7dffb0';
+    ctx.fillRect(44, 26, 40, 66);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('☎', 64, 70);
+  }));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false }));
+  s.scale.set(1.1, 1.1, 1);
+  return s;
+}
+Object.assign(FX.prototype, {
+  // キャラの上に出ることば（「ゴクゴク…」「ブチッ！！」など）
+  say(p, text, cls = 'say', life = 1.2) {
+    if (!p || !p.pos) return;
+    if (!this.wordOk(p, null)) return;
+    this.num(_v.copy(p.pos).addScaledVector(KUP, 2.1), String(text), 'kit ' + cls, life, 1.0);
+  },
+  notes(p, n = 4) {
+    if (!p || !this.wordOk(p, null)) return;
+    for (let i = 0; i < n; i++) setTimeout(() => p.alive && this.num(_v.copy(p.pos).add(new THREE.Vector3(rand(-2.2, 2.2), rand(0.8, 2.2), rand(-2.2, 2.2))), i % 2 ? '♫' : '♪', 'kit note', 1.1, 1.6), i * 90);
+  },
+  zzz(t, dur = 2) {
+    if (!t || !this.wordOk(t, null)) return;
+    const n = Math.max(1, Math.round(dur / 0.6));
+    for (let i = 0; i < n; i++) setTimeout(() => t.alive && this.num(_v.copy(t.pos).add(new THREE.Vector3(rand(-0.4, 0.4), 1.7, 0)), 'Z', 'kit sleep', 1.0, 1.4), i * 600);
+  },
+  // 前に出つづけるブレス（火・ゲロ）。向きはキャラの前（右の親指でねらえる）
+  breath(p, color, range = 10, dur = 0.8, kind = 'fire') {
+    if (!p) return;
+    (this.kstreams || (this.kstreams = [])).push({ p, color, range, dur, t: 0, kind });
+  },
+  // まっすぐ太い光のビーム（ゆかの怪獣ブレス）
+  beam(p, color, len = 26, dur = 1.2) {
+    if (!p) return;
+    const g = new THREE.Group();
+    const core = new THREE.Mesh(pcache('kbCore', () => new THREE.CylinderGeometry(1, 1, 1, 14, 1, true)), kitMat('kbCoreM' + color, 0xfff2c0, 0.95));
+    const shell = new THREE.Mesh(pcache('kbCore', () => new THREE.CylinderGeometry(1, 1, 1, 14, 1, true)), kitMat('kbShellM' + color, color, 0.55));
+    core.rotation.x = shell.rotation.x = Math.PI / 2;
+    g.add(core, shell);
+    g.userData = { core, shell, len };
+    this.scene.add(g);
+    (this.kbeams || (this.kbeams = [])).push({ p, g, dur, t: 0, len, color });
+  },
+  tornado(p, dur = 1.2) {
+    if (!p) return;
+    (this.kstreams || (this.kstreams = [])).push({ p, color: 0x9dffb8, range: 6, dur, t: 0, kind: 'tornado' });
+  },
+  stink(p) {
+    if (!p) return;
+    for (let i = 0; i < 12; i++) {
+      const a = rand(0, 6.28), r = rand(1, 6);
+      this.parts.emit(p.pos.x + Math.cos(a) * r, p.pos.y + rand(-1, 1.2), p.pos.z + Math.sin(a) * r, 0, rand(0.6, 1.6), 0, 0.9, 1.4, 2.6, i % 3 ? 0x9acd32 : 0x6b8e23, 1);
+    }
+  },
+  // はやたのチャリ（技のあいだだけ足もとに出る）
+  bike(p, dur = 1) {
+    if (!p || !p.model) return;
+    const m = bikeMesh();
+    p.model.add(m);
+    (this.kprops || (this.kprops = [])).push({ p, m, dur, t: 0, kind: 'bike' });
+  },
+  drums(p, dur = 2) {
+    if (!p || !p.model) return;
+    const m = drumMesh();
+    p.model.add(m);
+    (this.kprops || (this.kprops = [])).push({ p, m, dur, t: 0, kind: 'drums' });
+  },
+  phoneRing(t, dur = 3) {
+    if (!t || !t.model) return;
+    const s = phoneSprite();
+    s.position.set(0, 2.1, 0);
+    t.model.add(s);
+    (this.kprops || (this.kprops = [])).push({ p: t, m: s, dur, t: 0, kind: 'phone', next: 0 });
+  },
+  // ゆかのキック（エブンに当たる）
+  kick(t, src) {
+    if (!t) return;
+    this.ring(t.pos, 0xff8a5a, 0.4, 3.2, 0.3, true, 0.9);
+    this.vfx.spark({ cell: CELL.STAR4, pos: t.pos, s0: 0.6, s1: 3.4, life: 0.25, ease: 1, rot: rand(-0.3, 0.3), color: 0xffd0a0, i: 2.4, core: 2.2, fadePow: 1.5 });
+    for (let i = 0; i < 14; i++) this.parts.emit(t.pos.x, t.pos.y, t.pos.z, rand(-8, 8), rand(-2, 8), rand(-8, 8), 0.35, 1.0, 0.1, 0xff8a5a, 3);
+    if (this.wordOk(t, src)) this.num(_v.copy(t.pos).addScaledVector(KUP, 1.8), 'ゲシッ', 'kit kick', 1.0, 1.2);
+  },
+  donuts(p) {
+    if (!p) return;
+    this.ring(p.pos, 0xff9cc0, 0.5, 14, 0.6, false, 0.9);
+    for (let i = 0; i < 40; i++) {
+      const a = rand(0, 6.28);
+      this.parts.emit(p.pos.x, p.pos.y + 0.6, p.pos.z, Math.cos(a) * rand(6, 14), rand(2, 9), Math.sin(a) * rand(6, 14), 0.9, 1.6, 0.6, i % 3 ? 0xff9cc0 : 0xd8955a, 3);
+    }
+    if (this.wordOk(p, null)) for (let i = 0; i < 4; i++) setTimeout(() => this.num(_v.copy(p.pos).add(new THREE.Vector3(rand(-3, 3), rand(1, 2.5), rand(-3, 3))), '◎', 'kit donut', 1.1, 1.4), i * 110);
+  },
+  confetti(p) {
+    if (!p) return;
+    const cols = [0xff5a6a, 0xffd23a, 0x5ad7ff, 0x7dff9a, 0xc77dff];
+    for (let i = 0; i < 60; i++) this.parts.emit(p.pos.x, p.pos.y + 1, p.pos.z, rand(-10, 10), rand(4, 14), rand(-10, 10), 1.2, 0.9, 0.5, cols[i % cols.length], 1.2, 6);
+    this.ring(p.pos, 0xffd23a, 0.5, 10, 0.5, false, 0.9);
+  },
+
+  // 毎フレーム（FX.update から）
+  updateKit(dt) {
+    const M = this.match;
+    // ブレス・竜巻
+    if (this.kstreams) {
+      for (let i = this.kstreams.length - 1; i >= 0; i--) {
+        const s = this.kstreams[i];
+        s.t += dt;
+        const p = s.p;
+        if (s.t >= s.dur || !p.alive) {
+          this.kstreams.splice(i, 1);
+          continue;
+        }
+        if (s.kind === 'tornado') {
+          for (let k = 0; k < 6; k++) {
+            const a = s.t * 14 + k * 1.05, r = 2 + (k % 3) * 2;
+            this.parts.emit(p.pos.x + Math.cos(a) * r, p.pos.y - 1 + k * 0.5, p.pos.z + Math.sin(a) * r, -Math.sin(a) * 9, 4, Math.cos(a) * 9, 0.4, 1.2, 0.4, s.color, 1);
+          }
+          continue;
+        }
+        const f = p.forward;
+        const sp = s.range / 0.42;
+        const n = s.kind === 'vomit' ? 7 : 6;
+        for (let k = 0; k < n; k++) {
+          const ox = p.pos.x + f.x * 0.9, oy = p.pos.y + 0.45 + f.y * 0.9, oz = p.pos.z + f.z * 0.9;
+          const vx = f.x * sp + rand(-1, 1) * sp * 0.16, vy = f.y * sp + rand(-1, 1) * sp * 0.12, vz = f.z * sp + rand(-1, 1) * sp * 0.16;
+          const c = s.kind === 'vomit' ? (k % 3 ? 0xc9d14a : 0xe8d27a) : k % 3 ? s.color : 0xfff0a0;
+          this.parts.emit(ox, oy, oz, vx, vy - (s.kind === 'vomit' ? 2 : 0), vz, 0.42, 0.6, s.kind === 'vomit' ? 1.6 : 2.2, c, 1.2, s.kind === 'vomit' ? 10 : 0);
+        }
+      }
+    }
+    // ビーム
+    if (this.kbeams) {
+      for (let i = this.kbeams.length - 1; i >= 0; i--) {
+        const b = this.kbeams[i];
+        b.t += dt;
+        const p = b.p;
+        if (b.t >= b.dur || !p.alive) {
+          this.scene.remove(b.g);
+          this.kbeams.splice(i, 1);
+          continue;
+        }
+        const k = b.t / b.dur;
+        const w = (k < 0.15 ? k / 0.15 : k > 0.85 ? (1 - k) / 0.15 : 1) * (1 + Math.sin(b.t * 40) * 0.08);
+        _v.copy(p.pos).addScaledVector(p.forward, b.len / 2 + 0.8);
+        _v.y += 0.4;
+        b.g.position.copy(_v);
+        _v2.copy(_v).add(p.forward);
+        b.g.lookAt(_v2);
+        b.g.userData.core.scale.set(0.9 * w, b.len, 0.9 * w);
+        b.g.userData.shell.scale.set(2.2 * w, b.len, 2.2 * w);
+        if (Math.random() < dt * 40) {
+          const d = rand(0, b.len);
+          this.parts.emit(p.pos.x + p.forward.x * d, p.pos.y + 0.4 + p.forward.y * d, p.pos.z + p.forward.z * d, rand(-3, 3), rand(-1, 4), rand(-3, 3), 0.4, 1.4, 0.2, b.color, 1);
+        }
+      }
+    }
+    // 小道具（チャリ・ドラム・電話）
+    if (this.kprops) {
+      for (let i = this.kprops.length - 1; i >= 0; i--) {
+        const q = this.kprops[i];
+        q.t += dt;
+        if (q.t >= q.dur || !q.p.alive) {
+          if (q.m.parent) q.m.parent.remove(q.m);
+          this.kprops.splice(i, 1);
+          continue;
+        }
+        if (q.kind === 'bike') {
+          for (const c of q.m.children) if (c.geometry && c.geometry.type === 'TorusGeometry') c.rotation.x += dt * 30;
+        } else if (q.kind === 'drums') {
+          const c = q.m.userData.cym;
+          if (c) c.rotation.z = 0.25 + Math.sin(q.t * 18) * 0.15;
+        } else if (q.kind === 'phone') {
+          q.m.material.rotation = Math.sin(q.t * 30) * 0.25;
+          q.next -= dt;
+          if (q.next <= 0 && this.wordOk(q.p, null)) {
+            q.next = 0.9;
+            this.num(_v.copy(q.p.pos).addScaledVector(KUP, 2.6), 'プルルル', 'kit call', 0.8, 0.8);
+          }
+        }
+      }
+    }
+    // 状態のオーラ（怒り・酔い・おなか・ねむり・くさい・やけど など）
+    for (const p of M.punchers) {
+      const st = p.status;
+      if (!st || !p.alive) continue;
+      const near = this.wordOk(p, null);
+      if (st & 1 && Math.random() < dt * 18) this.parts.emit(p.pos.x + rand(-0.5, 0.5), p.pos.y + rand(-0.6, 0.8), p.pos.z + rand(-0.5, 0.5), 0, 2.4, 0, 0.4, 0.7, 0.1, 0xff3a3a, 2);
+      if (st & 512 && Math.random() < dt * 22) this.parts.emit(p.pos.x + rand(-0.5, 0.5), p.pos.y + rand(-0.8, 0.4), p.pos.z + rand(-0.5, 0.5), 0, 3, 0, 0.35, 0.8, 0.1, 0xff8a2a, 2);
+      if (st & 32 && Math.random() < dt * 16) this.parts.emit(p.pos.x + rand(-2, 2), p.pos.y + rand(-1, 1), p.pos.z + rand(-2, 2), 0, 0.8, 0, 0.9, 1.2, 2.2, 0x9acd32, 1);
+      if (st & 4 && Math.random() < dt * 8) this.parts.emit(p.pos.x + rand(-0.4, 0.4), p.pos.y - 0.6, p.pos.z + rand(-0.4, 0.4), 0, 0.5, 0, 0.7, 0.8, 1.4, 0x8a5a2b, 1);
+      if (st & 2 && Math.random() < dt * 6) this.parts.emit(p.pos.x + rand(-0.4, 0.4), p.pos.y + 1.4, p.pos.z + rand(-0.4, 0.4), rand(-0.5, 0.5), 1, rand(-0.5, 0.5), 0.8, 0.4, 0.9, 0xffd1e6, 1);
+      if (st & 64 && Math.random() < dt * 10) this.parts.emit(p.pos.x + rand(-0.8, 0.8), p.pos.y + rand(-0.6, 1.2), p.pos.z + rand(-0.8, 0.8), 0, 0.6, 0, 0.5, 0.7, 0.1, 0xc77dff, 1);
+      if (st & 1024 && Math.random() < dt * 12) this.parts.emit(p.pos.x + rand(-0.9, 0.9), p.pos.y + rand(-0.9, 0.9), p.pos.z + rand(-0.9, 0.9), 0, 0, 0, 0.3, 1.0, 0.2, 0xff5a3a, 2);
+      if (!near) continue;
+      p._kw = (p._kw || 0) - dt;
+      if (p._kw > 0) continue;
+      for (const [bit, w, cls] of STATUS_WORD) {
+        if (st & bit) {
+          p._kw = 1.4 + Math.random() * 0.5;
+          this.num(_v.copy(p.pos).addScaledVector(KUP, 1.9), w, 'kit ' + cls, 0.9, 0.9);
+          break;
+        }
+      }
+    }
+  },
+  clearKit() {
+    for (const b of this.kbeams || []) this.scene.remove(b.g);
+    for (const q of this.kprops || []) if (q.m.parent) q.m.parent.remove(q.m);
+    this.kbeams = [];
+    this.kprops = [];
+    this.kstreams = [];
+  },
+});

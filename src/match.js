@@ -18,6 +18,7 @@ import { buildMonster } from './monsters.js';
 import { BlobShadows } from './shadow.js';
 import { GRADES } from './post.js';
 import { KO_EMOTE } from './model.js';
+import { applySynergy, updateSynergy, PAIRS, MACHIDA } from './kits.js';
 
 const _v = new THREE.Vector3();
 // スタンプ → 身ぶり（ナイス・ありがとう・集まれ・守って・攻める・ドンマイ・ガハハ・ごめん）
@@ -74,13 +75,30 @@ export class Match {
     // パンチャー：プレイヤー＋味方3人／敵4人
     this.punchers = [];
     const myTeam = 0;
-    const roster = (team, includePlayer) => {
+    const roster = (team, includePlayer, avoid = []) => {
       const ids = shuffle(PUNCHER_IDS.slice());
       const list = [];
+      const put = (id) => {
+        if (list.length < 4 && !list.includes(id)) list.push(id);
+      };
       if (includePlayer) list.push(opts.char);
-      // 3人ともちがうキャラ＋1人かぶり
-      for (const id of ids) if (list.length < 4 && !list.includes(id)) list.push(id);
-      while (list.length < 4) list.push(ids[Math.floor(Math.random() * ids.length)]);
+      // ときどき、相性のいい組み合わせ（カップル・町田の4人）をいっしょに出す
+      const r = Math.random();
+      if (r < 0.12 && (!includePlayer || MACHIDA.includes(opts.char))) MACHIDA.forEach(put);
+      else if (r < 0.5) {
+        // エブン×ゆか（蹴られる）は、自分がエブンかゆかのときはわざわざ入れない（たまたま入ることはある）
+        const noKick = includePlayer && (opts.char === 'even' || opts.char === 'yuka');
+        const pool = noKick ? PAIRS.filter((x) => !x.kick) : PAIRS;
+        const mine = includePlayer ? pool.filter((x) => x.a === opts.char || x.b === opts.char) : [];
+        const pr = mine.length && Math.random() < 0.6 ? mine[0] : pool[Math.floor(Math.random() * pool.length)];
+        if (!includePlayer || list.length + 2 <= 4 || pr.a === opts.char || pr.b === opts.char) {
+          put(pr.a);
+          put(pr.b);
+        }
+      }
+      // のこりは、相手チームとかぶらないキャラから
+      for (const id of ids) if (!avoid.includes(id)) put(id);
+      for (const id of ids) put(id);
       return list;
     };
     if (opts.roster) {
@@ -88,6 +106,8 @@ export class Match {
     } else this.buildRandom(opts, roster, myTeam);
     this.player = this.punchers.find((p) => p.isPlayer) || this.punchers[0];
     this.punchers.forEach((p, i) => (p.netId = i));
+    // 相性（同じチームのカップル・町田の4人・敵どうし）。ホストも入った人も同じ組み合わせから同じ結果
+    applySynergy(this);
     this.combat = new Combat(this);
     this.skills = new Skills(this);
     this.mode = createMode(opts.mode, this);
@@ -121,6 +141,14 @@ export class Match {
     this.introCam = { t: 0 };
     sound.playBgm('battle');
     this.announce(MODES[opts.mode].name + (this.stage.name ? '\n' + this.stage.name : ''), -1, true);
+    // どっちのチームか、はじめにはっきり出す（赤チームなのに青に見えて混乱した、の対策）
+    const myT = this.player ? this.player.team : 0;
+    this._teamT = setTimeout(() => {
+      if (this.running && this.hud && (this.phase === 'intro' || this.phase === 'wait')) this.announce('あなたは' + TEAM[myT].name, myT, true);
+      // 相性が出ていたら、そのあとに知らせる
+      const syn = (this.synergies || []).slice(0, 3);
+      if (syn.length) this._synT = setTimeout(() => this.running && this.hud && this.showSynergies(syn), 1500);
+    }, 2300);
     this.prewarm();
   }
 
@@ -130,10 +158,15 @@ export class Match {
     if (!R || this.app.noRender || typeof R.compile !== 'function') return;
     try {
       const g = new THREE.Group();
-      const mons = new Set(['beetle']); // ボムビートル（罠）
+      const mons = new Set(); // ディスクの見た目
       for (const p of this.punchers) for (const id of p.omamori || []) if (OMAMORI[id] && OMAMORI[id].mon) mons.add(OMAMORI[id].mon);
       for (const m of mons) g.add(buildMonster(m));
-      for (const k of ['akahon', 'tangocho', 'pencil']) g.add(projectileLook(k));
+      const kinds = new Set(['akahon', 'tangocho', 'pencil']);
+      for (const p of this.punchers) if (p.def.attack.proj) kinds.add(p.def.attack.proj);
+      if (this.punchers.some((p) => p.def.skill.id === 'iceFrappe')) kinds.add('ice');
+      if (this.punchers.some((p) => p.def.skill.id === 'oniden')) kinds.add('phone');
+      if (this.punchers.some((p) => (p.omamori || []).includes('cookie'))) kinds.add('cookie');
+      for (const k of kinds) g.add(projectileLook(k));
       // 試合では「後処理の板（linear）」に描くので、その形のシェーダーを用意する（画面に直接描く形とは別物）
       const post = this.app.post;
       const prev = R.getRenderTarget();
@@ -177,7 +210,7 @@ export class Match {
       if (r.deck && r.deck.length === 4 && r.deck.every((id) => OMAMORI[id])) {
         p.omamori = r.deck.slice();
         p.omCd = p.omamori.map(() => 0);
-        p.elem = OMAMORI[p.omamori[0]].elem;
+        p.elem = def.elem || OMAMORI[p.omamori[0]].elem;
         p.omLv = (r.lv || [1, 1, 1, 1]).slice(0, 4);
       } else {
         const lv = { easy: 1, normal: 2, hard: 3 }[opts.difficulty || 'normal'] || 1;
@@ -188,7 +221,13 @@ export class Match {
   }
 
   buildRandom(opts, roster, myTeam) {
-    const teams = opts.solo ? [[opts.char], []] : [roster(myTeam, true), roster(1 - myTeam, false)];
+    let teams;
+    if (opts.solo) teams = [[opts.char], []];
+    else if (opts.teams) teams = opts.teams.map((t) => t.slice(0, 4).map((id) => (PUNCHERS[id] ? id : 'tora'))); // テスト用：決まった組み合わせ
+    else {
+      const mine = roster(myTeam, true);
+      teams = [mine, roster(1 - myTeam, false, mine)];
+    }
     // フレンドがいたら、その人の名前とキャラでCPUを出す（味方から順に）
     const friendSlots = [];
     if (!opts.solo && opts.friends && opts.friends.length) {
@@ -210,7 +249,7 @@ export class Match {
         if (isPlayer && opts.deck) {
           p.omamori = opts.deck.slice();
           p.omCd = p.omamori.map(() => 0);
-          p.elem = OMAMORI[p.omamori[0]].elem;
+          p.elem = def.elem || OMAMORI[p.omamori[0]].elem;
           p.omLv = (opts.deckLv || []).slice();
         } else if (!isPlayer) {
           const lv = { easy: 1, normal: 2, hard: 3 }[opts.difficulty || 'normal'] || 1;
@@ -227,6 +266,19 @@ export class Match {
       if (p && !p.isPlayer) {
         p.displayName = String(fs.name).slice(0, 10);
         p.friend = true;
+      }
+    }
+  }
+
+  // 相性の知らせ（同じチームのカップル・町田ブラザーズ・敵どうし）
+  showSynergies(list) {
+    const me = this.player ? this.player.team : 0;
+    for (const x of list) {
+      if (x.bad) this.hud.toastSyn && this.hud.toastSyn('💔 ' + x.name + '　ちょっと弱くなる', -1, true);
+      else {
+        const who = x.team === me ? '味方' : '敵';
+        const what = x.machida ? '町田ブラザーズ結成！ 4人とも強くなる' : x.kick ? 'ゆかがエブンを蹴る…エブンはうれしい' : '相性ばつぐん！ 2人とも強くなる';
+        this.hud.toastSyn && this.hud.toastSyn((x.machida ? '🏙️ ' : '💞 ') + who + '：' + (x.machida ? '' : x.name + '　') + what, x.team, false);
       }
     }
   }
@@ -422,6 +474,7 @@ export class Match {
       }
       for (const p of this.punchers) this.stepPuncher(p, dt);
       this.skills.update(dt);
+      if (this.phase === 'play') updateSynergy(this, dt);
       this.combat.update(dt);
       this.mode.update(dt, this.time);
       for (const g of this.guardians) g.update(dt, this.time);
@@ -507,6 +560,7 @@ export class Match {
     victim.vel.multiplyScalar(0.4);
     victim.vel.y += 6;
     this.mode.onKO(victim, killer);
+    this.skills.onKO && this.skills.onKO(victim, killer);
     // スペシャルゲージ：倒した人は約1.2目盛り、倒された人は約0.7目盛り減る
     victim.sp = Math.max(0, victim.sp - 0.7 / 6);
     if (killer && killer.def) {
@@ -680,6 +734,8 @@ export class Match {
 
   dispose() {
     this.running = false;
+    clearTimeout(this._teamT);
+    clearTimeout(this._synT);
     this.input.enabled = false;
     this.input.reset();
     this.shadows.dispose();
