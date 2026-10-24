@@ -46,11 +46,20 @@ export class Combat {
     }
     if (!p.canAct() || p.charge || p.state === 'dash' || p.state === 'uturn' || p.state === 'step' || p.state === 'special') return;
     if (A.cd > 0 || A.phase >= 0) return;
-    // ねらう相手
+    // CPUの強さ（v1.7）：いちばん弱いCPUは攻撃しない
+    const lv = p.cpu ? p.cpuLv : null;
+    if (lv && lv.atk === false) return;
+    // ねらう相手（近くにいなければ、遠くを撃てるキャラは遠くの敵へ撃つ）
     const target = this.pickTarget(p);
-    if (!target) return;
+    if (!target) {
+      const far = atkDef.shot ? this.pickShotTarget(p) : null;
+      if (far) this.startShot(p, far, lv);
+      return;
+    }
+    A.shotNow = false;
     const idx = A.combo % atkDef.dmg.length;
-    const gap = atkDef.gap[idx] * (p.buffs.ikemen > 0 ? 0.75 : 1);
+    // 弱いCPUは、攻撃と攻撃のあいだが長い
+    const gap = atkDef.gap[idx] * (p.buffs.ikemen > 0 ? 0.75 : 1) * (lv && lv.atkRate ? lv.atkRate : 1);
     A.cd = gap;
     A.dur = Math.min(gap * 0.95, 0.42);
     A.phase = 0;
@@ -101,6 +110,78 @@ export class Combat {
       }
     }
     return best;
+  }
+
+  // 遠くを撃つ相手：ロックオンした敵（とどけば）か、前にいていちばん近い敵。間に壁があれば撃たない
+  pickShotTarget(p) {
+    const S = p.def.attack.shot;
+    const L = p.lock;
+    if (L && L.alive !== false && (!L.attackable || L.attackable())) {
+      const d = L.pos.distanceTo(p.pos);
+      if (d <= S.range + (L.radius || 0.8) && this.clearShot(p, L, d)) return L;
+    }
+    let best = null, bestS = 1e9;
+    for (const t of this.targetsFor(p)) {
+      _v.subVectors(t.pos, p.pos);
+      const d = _v.length();
+      if (d > S.range + (t.radius || 0.8) || d < 0.5) continue;
+      const dot = _v.dot(p.forward) / d;
+      if (dot < 0.86) continue;
+      if (!this.clearShot(p, t, d)) continue;
+      const sc = d - dot * 6 + (t.isGuardian ? 8 : 0);
+      if (sc < bestS) {
+        bestS = sc;
+        best = t;
+      }
+    }
+    return best;
+  }
+  clearShot(p, t, d) {
+    _v2.subVectors(t.pos, p.pos).normalize();
+    const r = t.radius || 0.8;
+    return this.match.world.raycast(p.pos, _v2, d - r) >= d - r - 0.5;
+  }
+  // 遠くへ撃つ（てつんどのビートショット）。近くの連打とは別に数える
+  startShot(p, t, lv) {
+    const A = p.atk, S = p.def.attack.shot;
+    const i = (A.shotN || 0) % S.dmg.length;
+    A.shotN = (A.shotN || 0) + 1;
+    const gap = S.gap[i] * (p.buffs.ikemen > 0 ? 0.75 : 1) * (lv && lv.atkRate ? lv.atkRate : 1);
+    A.cd = gap;
+    A.dur = Math.min(gap * 0.95, 0.34);
+    A.phase = 0;
+    A.shotNow = true;
+    A.pending = null;
+    A.hitIdx = i;
+    A.heavy = i === S.heavyAt;
+    A.side = A.side === 1 ? 0 : 1;
+    this.shootAlt(p, t, i);
+  }
+  shootAlt(p, t, i) {
+    const S = p.def.attack.shot;
+    const sp = S.projSpeed || 48;
+    _v.copy(t.pos);
+    const d = t.pos.distanceTo(p.pos);
+    if (t.vel) _v.addScaledVector(t.vel, (d / sp) * 0.6);
+    _v.sub(p.pos).normalize();
+    const start = p.pos.clone().addScaledVector(p.forward, 0.9);
+    start.y += 0.35;
+    const heavy = i === S.heavyAt;
+    this.spawnProjectile({
+      owner: p,
+      pos: start,
+      vel: _v.clone().multiplyScalar(sp),
+      dmg: S.dmg[i] * p.def.atk,
+      radius: (S.radius || 0.6) * (heavy ? 1.35 : 1),
+      life: (S.range + 6) / sp,
+      kind: S.proj || 'ink',
+      opts: { elem: true, kind: 'normal', knock: heavy ? 8 : 2.5, heavy },
+      homing: t,
+      turn: S.turn || 2.6,
+      big: heavy,
+      spin: 18,
+    });
+    this.match.sfx('shot', p);
   }
 
   meleeHit(p, t, idx) {
@@ -170,7 +251,8 @@ export class Combat {
   damage(src, t, base, opts = {}) {
     const M = this.match;
     if (!t || (t.alive === false)) return 0;
-    if (t.isGuardian) return t.takeDamage(src, base, opts);
+    // ダルマへのダメージも、CPUの強さに合わせる（v1.7）
+    if (t.isGuardian) return t.takeDamage(src, src && src.cpu && src.cpuLv ? base * src.cpuLv.dmg : base, opts);
     if (t.invuln > 0 || t.state === 'special') {
       if (t.justT > 0 && (t.state === 'step' || t.state === 'roll') && !opts.noJust) this.justDodge(t, src, opts);
       else M.fx.miss && M.fx.miss(t);
@@ -193,7 +275,10 @@ export class Combat {
     // 技・相性の効果（攻撃力アップ／受けるダメージの増減）
     if (src && src.modAtk) dmg *= Math.max(0.3, 1 + src.modAtk);
     if (t.modDef) dmg *= Math.max(0.35, 1 + t.modDef);
-    if (src && src.cpu && M.diff) dmg *= M.diff.dmg;
+    // CPUの強さ（1人ずつ。敵のダルマの弾は guardK）
+    if (src && src.cpu && src.cpuLv) dmg *= src.cpuLv.dmg;
+    else if (src && src.cpu && M.diff) dmg *= M.diff.dmg;
+    if (dmg <= 0 && src && src.cpu) return 0;
     if (t.buffs.big > 0) dmg *= 0.5;
     dmg = Math.round(dmg);
     // バリア

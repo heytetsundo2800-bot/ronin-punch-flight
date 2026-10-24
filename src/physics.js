@@ -63,6 +63,7 @@ export class World {
   resolveSphere(p, r, vel, info) {
     info.ground = false;
     info.hitWall = false;
+    info.bound = false; // 場外の見えない壁に当たった（v1.7：見えない壁では上へすべらせない）
     info.wallNormal.set(0, 0, 0);
     info.groundY = -Infinity;
     const list = this.near(p.x, p.z, r + 1, this._tmpList || (this._tmpList = []));
@@ -83,10 +84,10 @@ export class World {
     // 場外の見えない壁
     const b = this.bounds;
     if (b) {
-      if (p.x < -b.x) { p.x = -b.x; if (vel.x < 0) vel.x = 0; info.hitWall = true; info.wallNormal.set(1, 0, 0); }
-      if (p.x > b.x) { p.x = b.x; if (vel.x > 0) vel.x = 0; info.hitWall = true; info.wallNormal.set(-1, 0, 0); }
-      if (p.z < b.zMin) { p.z = b.zMin; if (vel.z < 0) vel.z = 0; info.hitWall = true; info.wallNormal.set(0, 0, 1); }
-      if (p.z > b.zMax) { p.z = b.zMax; if (vel.z > 0) vel.z = 0; info.hitWall = true; info.wallNormal.set(0, 0, -1); }
+      if (p.x < -b.x) { p.x = -b.x; if (vel.x < 0) vel.x = 0; info.hitWall = info.bound = true; info.wallNormal.set(1, 0, 0); }
+      if (p.x > b.x) { p.x = b.x; if (vel.x > 0) vel.x = 0; info.hitWall = info.bound = true; info.wallNormal.set(-1, 0, 0); }
+      if (p.z < b.zMin) { p.z = b.zMin; if (vel.z < 0) vel.z = 0; info.hitWall = info.bound = true; info.wallNormal.set(0, 0, 1); }
+      if (p.z > b.zMax) { p.z = b.zMax; if (vel.z > 0) vel.z = 0; info.hitWall = info.bound = true; info.wallNormal.set(0, 0, -1); }
       if (p.y > b.yMax) { p.y = b.yMax; if (vel.y > 0) vel.y = 0; }
     }
     return info;
@@ -315,5 +316,5 @@ function rayHit(c, o, d, maxT) {
 }
 
 export function makeHitInfo() {
-  return { ground: false, hitWall: false, wallNormal: new THREE.Vector3(), groundY: 0 };
+  return { ground: false, hitWall: false, bound: false, wallNormal: new THREE.Vector3(), groundY: 0 };
 }

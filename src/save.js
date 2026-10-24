@@ -1,9 +1,12 @@
 // セーブデータ（端末に保存。アカウントがあればサーバーにも預ける）
 import { store } from './util.js';
 import { PUNCHERS, OMAMORI, OMAMORI_IDS } from './characters.js';
-import { rankOf } from './config.js';
+import { rankOf, diffKey, DIFFICULTY } from './config.js';
 
 const KEY = 'rpf_save_v1';
+// 1試合でふえる点の上限（サーバーのチート対策 api/rpf.js の RP_STEP・WPT_STEP と同じ。こえると切りつめられて「あやしい」に数えられる）
+const RP_GAIN_MAX = 60;
+const WPT_GAIN_MAX = 2500;
 
 export function defaultSave() {
   const decks = {};
@@ -16,7 +19,8 @@ export function defaultSave() {
     char: 'tora',
     mode: 'scramble',
     stage: 'random',
-    diff: 'normal',
+    diff: 'easy',
+    diffV: 2,
     decks,
     om,
     rp: 0,
@@ -49,6 +53,12 @@ export function loadSave() {
     if (!Array.isArray(deck) || deck.length !== 4 || deck.some((o) => !OMAMORI[o])) out.decks[id] = d.decks[id];
   }
   out.week = s.week || d.week;
+  // v1.7：CPUの強さが6段階に。前の版で「つよい」をえらんでいた人は、同じ強さの「鬼」に
+  if (!s.diffV) {
+    if (out.diff === 'hard') out.diff = 'oni';
+    out.diffV = 2;
+  }
+  out.diff = diffKey(out.diff);
   return out;
 }
 
@@ -74,6 +84,11 @@ export function applyResult(s, r) {
   if (mvp) gain += 10;
   gain += Math.min(10, r.me.stats.ko * 2);
   if (myWin < 0) gain = Math.max(-10, gain - 0);
+  // v1.7：CPUの強さで点を変える（弱いCPUに勝っても少なめ・強いCPUなら多め。オンラインはそのまま）
+  const D = !r.online && r.diff ? DIFFICULTY[r.diff] : null;
+  const k = D ? D.pts : 1;
+  if (D && k !== 1) gain = gain > 0 ? Math.max(1, Math.round(gain * k)) : D.lv <= 2 ? 0 : gain;
+  gain = Math.min(RP_GAIN_MAX, gain);
   const before = s.rp;
   s.rp = Math.max(0, s.rp + gain);
   s.best = Math.max(s.best, s.rp);
@@ -84,7 +99,7 @@ export function applyResult(s, r) {
   if (mvp) s.mvp++;
   const wk = weekId();
   if (s.week.id !== wk) s.week = { id: wk, pt: 0 };
-  const pt = Math.max(0, r.me.stats.score + (myWin > 0 ? 300 : myWin === 0 ? 120 : 60));
+  const pt = Math.min(WPT_GAIN_MAX, Math.round(Math.max(0, r.me.stats.score + (myWin > 0 ? 300 : myWin === 0 ? 120 : 60)) * k));
   s.week.pt += pt;
   const cs = s.charStats[r.char] || { plays: 0, wins: 0 };
   cs.plays++;
@@ -93,6 +108,12 @@ export function applyResult(s, r) {
   // ディスクパック：勝ち・MVPでもらえる
   let bags = myWin > 0 ? 1 : 0;
   if (mvp) bags++;
+  // v1.7：弱いCPU（点が1倍より少ない段階）だと、パックが出るのはその割合だけ
+  if (D && k < 1) {
+    let n = 0;
+    for (let i = 0; i < bags; i++) if (Math.random() < k) n++;
+    bags = n;
+  }
   if (s.plays === 1) bags = Math.max(bags, 1);
   const prizes = [];
   for (let i = 0; i < bags; i++) prizes.push(openBag(s));

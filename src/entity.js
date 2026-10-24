@@ -172,6 +172,8 @@ export class Puncher {
   // 速さの倍率（キャラ・バフ・荷物）
   moveMul() {
     let m = this.speedMul;
+    // CPUの強さ（v1.7）：弱いCPUはゆっくり飛ぶ
+    if (this.cpu && this.cpuLv && this.cpuLv.speed) m *= this.cpuLv.speed;
     if (this.buffs.spdT > 0) m *= 1 + this.buffs.spd;
     if (this.buffs.slowT > 0) m *= 1 - this.buffs.slow;
     if (this.modSpd) m *= Math.max(0.3, 1 + this.modSpd);
@@ -181,7 +183,7 @@ export class Puncher {
     if (this.carry.balls.length) m *= 1 - Math.min(0.4, this.carry.balls.length * 0.08);
     if (this.carry.flag) m *= 0.62;
     if (this.buffs.big > 0) m *= 0.9;
-    if (this.atk.phase >= 0 && this.def.attack.kind === 'melee') m *= 0.55;
+    if (this.atk.phase >= 0 && this.def.attack.kind === 'melee' && !this.atk.shotNow) m *= 0.55;
     return m;
   }
 
@@ -210,7 +212,8 @@ export class Puncher {
         continue;
       }
       // すばやい操作の途中で少しだけ向きが変わっていたら元にもどす
-      if ((e.type === 'tap' || e.type === 'flick' || e.type === 'uturn') && e.dur != null && e.dur < 0.32 && this.pressYaw != null && !this.lock) {
+      // （右の親指のタップは別の指なので、もどさない。v1.7：前は右でタップすると、左で押したときの向きにもどっていた）
+      if ((e.type === 'tap' || e.type === 'flick' || e.type === 'uturn') && !e.look && e.dur != null && e.dur < 0.32 && this.pressYaw != null && !this.lock) {
         this.yaw = this.pressYaw;
         this.pitch = this.pressPitch;
         this.updateAxes();
@@ -573,6 +576,25 @@ export class Puncher {
           _v.y = 0;
           _v.normalize();
         }
+        // v1.7：長押しで壁にまっすぐぶつかっても止まらないように、壁にそって（正面なら上へ）すべる
+        //   壁からはなれた次のフレームでまた壁へ向かわないように、少しのあいだ壁の向きをおぼえておく
+        if (this.hit.hitWall) {
+          this.wallN = (this.wallN || new THREE.Vector3()).copy(this.hit.wallNormal);
+          this.wallT = 0.3;
+          this.wallBound = !!this.hit.bound;
+        }
+        if (this.state === 'fly' && this.wallT > 0) {
+          this.wallT -= dt;
+          const n = this.wallN;
+          const into = _v.dot(n);
+          if (into < -0.15) {
+            _v.addScaledVector(n, -into);
+            // 場外の見えない壁では横にすべるだけ（上へのぼらない）
+            if (!this.wallBound) _v.y += -into * 0.9;
+            if (_v.lengthSq() < 0.01) _v.set(0, 1, 0);
+            _v.normalize();
+          }
+        }
         _v.multiplyScalar(fly);
         this.vel.x = damp(this.vel.x, _v.x, MOVE.accel, dt);
         this.vel.y = damp(this.vel.y, _v.y, MOVE.accel, dt);
@@ -740,7 +762,7 @@ export class Puncher {
     else if (this.state === 'special') mode = 'special';
     else if (this.stunT > 0) mode = 'stun';
     else if (this.hurtT > 0) mode = 'hurt';
-    else if (this.atk.phase >= 0) mode = this.def.attack.kind === 'melee' ? 'punch' : 'shoot';
+    else if (this.atk.phase >= 0) mode = this.def.attack.kind === 'melee' && !this.atk.shotNow ? 'punch' : 'shoot';
     else if (this.state === 'dash') mode = 'dash';
     else if (this.ground && this.state !== 'step') mode = 'ground';
     else if (flying && sp > 3) mode = 'fly';

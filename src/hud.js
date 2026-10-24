@@ -136,7 +136,9 @@ export class Hud {
     this.bottomBar.querySelector('.nm').textContent = match.playerName || 'プレイヤー';
     root.appendChild(this.bottomBar);
     // 預けるボタン（スクランブル）
-    this.depBtn = el('button', 'depbtn hidden', '<b>預ける</b><small>長押し</small>');
+    // 預けている合図（v1.7：ダルマの近くでは自動で預ける。押さなくてよい）
+    this.depBtn = el('button', 'depbtn auto hidden', '<b>預け中</b><small>近くで自動</small>');
+    this.depBtn.tabIndex = -1;
     root.appendChild(this.depBtn);
     // お知らせ
     this.banner = el('div', 'banner hidden');
@@ -194,6 +196,16 @@ export class Hud {
     }
     this.cols[side].appendChild(row);
     this.rows.set(p, { row, hp: row.querySelector('.hp i'), carry: row.querySelector('.carry span'), carryBox: row.querySelector('.carry'), last: '' });
+  }
+  // 人を消す（訓練場のサンドバッグを入れかえるとき）
+  removeMember(p) {
+    const r = this.rows.get(p);
+    if (r) r.row.remove();
+    this.rows.delete(p);
+    const t = this.tags.get(p);
+    if (t) t.e.remove();
+    this.tags.delete(p);
+    for (const L of this.lockBtns) if (L.target === p) L.target = null;
   }
 
   resize() {
@@ -271,6 +283,16 @@ export class Hud {
     }
   }
   update(dt, cam) {
+    // はじめの「勝ち方」（カウントダウンの間だけ。試合が始まったらすぐ消す：相性のお知らせと重ならないように。オンラインの入った人の画面も同じ）
+    const gc = this.m.goalCard;
+    if (gc && (this.m.phase === 'play' || this.m.phase === 'finish' || this.m.phase === 'result')) {
+      this.m._gcT = (this.m._gcT || 0) + dt;
+      if (this.m._gcT > 0.3) {
+        this.m.goalCard = null;
+        gc.classList.add('out');
+        setTimeout(() => gc.remove(), 400);
+      }
+    }
     const M = this.m, me = M.player;
     this.frame++;
     this.updateGuide(dt);
@@ -413,6 +435,7 @@ export class Hud {
     // 預けるボタン
     const canDep = M.mode.canDeposit(me);
     this.depBtn.classList.toggle('hidden', !canDep);
+    this.depBtn.classList.toggle('press', canDep);
     if (!canDep) me.depositHeld = false;
     // 倒されたとき
     if (!me.alive) {

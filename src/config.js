@@ -1,6 +1,6 @@
 // 遊びごこちの数字（ここを変えると操作感がかわる）
-export const VERSION = '1.5.0';
-export const BUILD = '2026-10-23';
+export const VERSION = '1.7.0';
+export const BUILD = '2026-10-24';
 
 export const MATCH_TIME = 180; // 3分
 export const RESPAWN_TIME = 5; // 復活までの秒数
@@ -79,7 +79,7 @@ export const MODES = {
     sub: 'サクラを集めて3分後に多いチームの勝ち',
     howto: [
       'フィールドのサクラ（全50個）を、近くを通って集めよう',
-      '自分のチームのダルマに近づくと、持っているサクラを預けられる',
+      '自分のチームのダルマに近づくと、持っているサクラを自動で預ける',
       '倒されると、持っていたサクラは元の場所にもどる',
       'ダルマが攻撃されると、預けたサクラがこぼれる',
       '持つほど遅くなる。3分たったときに多いチームの勝ち！',
@@ -125,11 +125,32 @@ export function resolveStage(k) {
   return STAGES[k] ? k : STAGE_KEYS[Math.floor(Math.random() * STAGE_KEYS.length)];
 }
 
+// CPUの強さ（v1.7 で6段階。弱いほうから）
+//   atk：攻撃するか　atkRate：攻撃の間の長さ（倍）　dmg：与えるダメージ（倍）　skill：技を使う割合　sp：スペシャルを使うか
+//   disc：ディスク（none＝使わない／safe＝攻撃しないものだけ／all）　aim：ねらいの正確さ　react：考え直す間（秒）
+//   dodge：よける割合　speed：飛ぶ速さ（倍）　chase：敵を追いかける割合　guard：ダルマの弾（倍。0＝撃たない）
+//   omLv：ディスクのレベル　pts：勝ったときのランクの点・今週の点（倍。弱いCPUに勝っても点は少なめ）
+//   前の「やさしい／ふつう／つよい」より全体に弱くした（前の「ふつう」≒今の「つよい」、前の「つよい」＝今の「鬼」）
 export const DIFFICULTY = {
-  easy: { name: 'やさしい', aim: 0.55, react: 0.75, dodge: 0.08, skill: 0.4, dmg: 0.8 },
-  normal: { name: 'ふつう', aim: 0.8, react: 0.42, dodge: 0.22, skill: 0.7, dmg: 1.0 },
-  hard: { name: 'つよい', aim: 0.95, react: 0.22, dodge: 0.42, skill: 1.0, dmg: 1.12 },
+  zero: { lv: 1, name: 'おさんぽ', desc: '攻撃してこない。のんびり飛んでサクラを拾うだけ', atk: false, atkRate: 0, dmg: 0, skill: 0, sp: false, disc: 'none', aim: 0.3, react: 1.4, dodge: 0, speed: 0.72, chase: 0, guard: 0, omLv: 1, pts: 0.2 },
+  weak: { lv: 2, name: 'よわよわ', desc: 'たまに攻撃してくるけど、ダメージはとても小さい。技は使わない', atk: true, atkRate: 3.2, dmg: 0.25, skill: 0, sp: false, disc: 'safe', aim: 0.4, react: 1.1, dodge: 0, speed: 0.84, chase: 0.25, guard: 0.3, omLv: 1, pts: 0.4 },
+  easy: { lv: 3, name: 'やさしい', desc: '攻撃してくる。ダメージは小さめで、技はときどき', atk: true, atkRate: 1.8, dmg: 0.55, skill: 0.25, sp: true, disc: 'all', aim: 0.5, react: 0.85, dodge: 0.04, speed: 0.92, chase: 0.55, guard: 0.6, omLv: 1, pts: 0.7 },
+  normal: { lv: 4, name: 'ふつう', desc: 'ふつうに戦う。技も使う', atk: true, atkRate: 1.25, dmg: 0.8, skill: 0.5, sp: true, disc: 'all', aim: 0.66, react: 0.6, dodge: 0.1, speed: 0.97, chase: 0.85, guard: 0.85, omLv: 2, pts: 1 },
+  hard: { lv: 5, name: 'つよい', desc: 'よけたり、技をどんどん使ったりする', atk: true, atkRate: 1.0, dmg: 1.0, skill: 0.75, sp: true, disc: 'all', aim: 0.82, react: 0.42, dodge: 0.24, speed: 1, chase: 1, guard: 1, omLv: 2, pts: 1.25 },
+  oni: { lv: 6, name: '鬼', desc: 'ほぼ全力。うまい人むけ', atk: true, atkRate: 0.95, dmg: 1.12, skill: 1, sp: true, disc: 'all', aim: 0.95, react: 0.22, dodge: 0.42, speed: 1.03, chase: 1, guard: 1, omLv: 3, pts: 1.5 },
 };
+export const DIFF_KEYS = Object.keys(DIFFICULTY);
+// 知らない名前のときは「やさしい」（前の版の「つよい」→「鬼」の読みかえは save.js）
+export function diffKey(k) {
+  return DIFFICULTY[k] ? k : 'easy';
+}
+// 一人で遊ぶとき、味方のCPUの強さ（弱い段階でも味方は少しだけ手伝う）
+export function allyDiffKey(k) {
+  const lv = (DIFFICULTY[k] || DIFFICULTY.easy).lv;
+  if (lv <= 2) return 'easy';
+  if (lv <= 4) return 'normal';
+  return k;
+}
 
 // ランク（C→B→A→S→S+）
 export const RANKS = [

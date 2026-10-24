@@ -106,6 +106,24 @@ export function updateSynergy(M, dt) {
     // エブンは蹴られてうれしい（少しのあいだ強くなる）
     e.addMod('happy', { atk: 0.3 }, 4);
   }
+  // てつんどのリズムキープ（v1.7）：HPがいつも少しずつ回復。3秒間 攻撃を受けないと、もっと早く
+  for (const p of M.punchers) {
+    if (!p.alive || !p.def.passive || p.def.passive.id !== 'rhythmHeal') continue;
+    if (p.hp >= p.maxHp) {
+      p.regenAcc = 0;
+      continue;
+    }
+    const calm = M.time - (p.lastHitT == null ? -99 : p.lastHitT) > 3;
+    const v = p.maxHp * (calm ? 0.04 : 0.015) * dt;
+    p.heal(v, true);
+    p.regenAcc = (p.regenAcc || 0) + v;
+    p.regenShowT = (p.regenShowT || 0) - dt;
+    if (p.regenShowT <= 0) {
+      p.regenShowT = 2;
+      if (p.regenAcc >= 40 && M.fx.healNum) M.fx.healNum(p, Math.round(p.regenAcc));
+      p.regenAcc = 0;
+    }
+  }
   M._kitT = (M._kitT || 0) - dt;
   if (M._kitT > 0) return;
   M._kitT = 0.5;
@@ -693,19 +711,19 @@ export function updateKit(S, a, dt) {
       if (a.next <= 0 && a.t < a.dur) {
         a.next = 0.15;
         if (!local) {
-          M.fx.ring && M.fx.ring(p.pos, 0xff8a3d, 0.5, 5.5, 0.25, false, 0.8);
-          for (const t of enemiesNear(M, p, 5.5)) {
+          M.fx.ring && M.fx.ring(p.pos, 0xff8a3d, 0.5, 6.5, 0.25, false, 0.8);
+          for (const t of enemiesNear(M, p, 6.5)) {
             _v2.subVectors(t.pos, p.pos).normalize();
-            M.combat.damage(p, t, 60 * A, { elem: true, kind: 'ks', dir: _v2.clone(), knock: 2.5 });
+            M.combat.damage(p, t, 75 * A, { elem: true, kind: 'ks', dir: _v2.clone(), knock: 2.5 });
           }
         }
       }
       if (a.t >= a.dur) {
         if (!local) {
-          M.fx.shock && M.fx.shock(p.pos, 0xff8a3d, 7);
-          for (const t of enemiesNear(M, p, 6.5)) {
+          M.fx.shock && M.fx.shock(p.pos, 0xff8a3d, 8);
+          for (const t of enemiesNear(M, p, 7.5)) {
             _v2.subVectors(t.pos, p.pos).normalize();
-            M.combat.damage(p, t, 170 * A, { elem: true, kind: 'ks', heavy: true, dir: _v2.clone(), knock: 15, stun: 0.4 });
+            M.combat.damage(p, t, 220 * A, { elem: true, kind: 'ks', heavy: true, dir: _v2.clone(), knock: 15, stun: 0.45 });
           }
           M.fx.say && M.fx.say(p, 'ジャーン!!', 'beat');
         }

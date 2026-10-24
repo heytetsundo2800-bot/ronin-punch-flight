@@ -17,6 +17,13 @@ const FLICK_DIST = 30;
 const FLICK_SPEED = 0.32; // px/ms
 const DOUBLE_FLICK = 0.52; // 上→下 の連続フリックの受付
 const LOOK_RAD_PER_PX = 0.0075; // 右の親指でなぞったときの、1px あたりの向きの変わり方（約0.43度。右半分を端から端まで＝約90度）
+const LOOK_ACCEL = 0.6; // すばやくなぞったときに足す分（v1.7）
+const LOOK_TAP_TIME = 0.24; // 右の親指のタップ（v1.7：前は左と同じ 0.3秒・14px）
+const LOOK_TAP_SLOP = 8;
+function smoothstep(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
 
 export class Input {
   constructor(surface, ringEl, knobEl) {
@@ -111,8 +118,15 @@ export class Input {
     if (!p) return;
     if (e.cancelable) e.preventDefault();
     if (p.look) {
-      this.lookPX += e.clientX - p.x;
-      this.lookPY += e.clientY - p.y;
+      // v1.7：すばやくなぞると少し大きく回る（ゆっくりなら今までと同じ。最大1.6倍）
+      const t = this.now();
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      const dtm = Math.max(0.004, t - (p.lt || p.t0));
+      p.lt = t;
+      const v = Math.hypot(dx, dy) / (dtm * 1000);
+      const acc = 1 + LOOK_ACCEL * smoothstep(0.7, 2.4, v);
+      this.lookPX += dx * acc;
+      this.lookPY += dy * acc;
       p.x = e.clientX;
       p.y = e.clientY;
       p.moved = Math.max(p.moved, Math.hypot(p.x - p.x0, p.y - p.y0));
@@ -154,7 +168,9 @@ export class Input {
     const t = this.now();
     const dur = t - p.t0;
     if (p.look) {
-      if (e.type !== 'pointercancel' && dur < TAP_TIME && p.moved < TAP_SLOP) this.push({ type: 'tap', dur });
+      // 右の親指のタップ＝ブースト（v1.7：視点を少し直しただけでブーストにならないように、ほとんど動かさない短いタップだけ）
+      // 敵の上をタップしたときはロックオン（match.js の tapLock）
+      if (e.type !== 'pointercancel' && dur < LOOK_TAP_TIME && p.moved < LOOK_TAP_SLOP) this.push({ type: 'tap', dur, x: p.x0, y: p.y0, look: true });
       return;
     }
     const dx = p.x - p.x0, dy = p.y - p.y0;
@@ -217,7 +233,7 @@ export class Input {
   onKey(e) {
     if (!this.enabled) return;
     const k = e.key.toLowerCase();
-    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'enter'].includes(k)) e.preventDefault();
     if (this.keys.has(k)) return;
     this.keys.add(k);
     const map = { j: 'tap', enter: 'tap', e: ['flick', 1, 0], q: ['flick', -1, 0], x: ['flick', 0, 1], c: ['flick', 0, -1], r: 'uturn' };

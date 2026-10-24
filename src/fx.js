@@ -254,6 +254,29 @@ function projTemplate(k) {
     m.add(face);
     addSpr(m, 'ckS', 0xffd28a, 1.8, 0.45);
     m.userData.trail = 0xd9a15a;
+  } else if (k === 'beat') {
+    // てつんどのビートショット：十字に回る2本のドラムスティック（先は白）と、オレンジの音の輪
+    const stick = pcache('btG', () => new THREE.CylinderGeometry(0.05, 0.065, 1.5, 6));
+    const stickM = pcache('btM', () => toon(0xd9a066, { rim: 0.5, rimColor: 0xffe0a0 }));
+    const tipG = pcache('btTip', () => new THREE.SphereGeometry(0.09, 8, 6));
+    const tipM = pcache('btTipM', () => toon(0xfffaf0, { rim: 0.4 }));
+    for (let i = 0; i < 2; i++) {
+      const sm = new THREE.Mesh(stick, stickM);
+      if (i === 0) sm.rotation.z = Math.PI / 2;
+      else sm.rotation.x = Math.PI / 2;
+      m.add(sm);
+      for (const e of [-1, 1]) {
+        const tp = new THREE.Mesh(tipG, tipM);
+        if (i === 0) tp.position.x = e * 0.75;
+        else tp.position.z = e * 0.75;
+        m.add(tp);
+      }
+    }
+    const ring = new THREE.Mesh(pcache('btR', () => new THREE.TorusGeometry(0.78, 0.05, 6, 30)), addMat('btRM', 0xff8a3d, 0.8));
+    ring.rotation.x = Math.PI / 2;
+    m.add(ring);
+    addSpr(m, 'btS', 0xff7a2a, 2.3, 0.7);
+    m.userData.trail = 0xff8a3d;
   } else if (k === 'voice') {
     // エブンの歌声：炎の色の音の輪（2重）と音符の光
     for (let i = 0; i < 2; i++) {
@@ -323,7 +346,7 @@ function projTemplate(k) {
   }
   return m;
 }
-const KIT_PROJ = new Set(['voice', 'vomit', 'phone', 'ball', 'water', 'ice', 'sneeze', 'gust', 'cookie']);
+const KIT_PROJ = new Set(['voice', 'vomit', 'phone', 'ball', 'water', 'ice', 'sneeze', 'gust', 'cookie', 'beat']);
 // ロビー（ディスク画面）用：技の弾の見た目だけ
 export function projectileLook(kind) {
   return pcache('tpl_' + kind, () => projTemplate(kind)).clone();

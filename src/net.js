@@ -295,6 +295,9 @@ class Net {
             merged.rp = Math.max(S.rp || 0, remote.rp || 0);
             merged.plays = Math.max(S.plays || 0, remote.plays || 0);
             merged.om = { ...(S.om || {}), ...(remote.om || {}) };
+            // v1.7：前の版の記録の「つよい」は、同じ強さの「鬼」に（loadSave と同じ読みかえ）
+            if (!remote.diffV && remote.diff === 'hard') merged.diff = 'oni';
+            merged.diffV = 2;
             Object.assign(S, merged);
             saveSave(S);
           } catch (e) {}

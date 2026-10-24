@@ -214,6 +214,7 @@ export class HostMatch extends Match {
       s.atkSide = f & 16 ? 1 : 0;
       s.atkHeavy = !!(f & 32);
       s.alive = !!(f & 64);
+      s.atkShot = !!(f & 128);
       const ap = r.u8();
       s.atkPhase = ap === 255 ? -1 : ap / 254;
       s.turnVis = r.i8() / 100;
@@ -235,7 +236,16 @@ export class HostMatch extends Match {
         const d = t.pos.distanceTo(p.pos);
         const atk = p.def.attack;
         const idx = clamp(o.i | 0, 0, atk.dmg.length - 1);
-        if (a === 'mh') {
+        if (a === 'sh' && o.k === 1) {
+          // 遠くへの弾（てつんどのビートショット）。何発目かと撃つ間かくは、ホストで数える（改造した端末でも連射できない）
+          if (!atk.shot || d > atk.shot.range + (t.radius || 0.8) + 12) return;
+          if (this.time - (p.altShotT == null ? -9 : p.altShotT) < Math.min(...atk.shot.gap) * 0.5) return;
+          p.altShotT = this.time;
+          const i2 = (p.altShotN || 0) % atk.shot.dmg.length;
+          p.altShotN = (p.altShotN || 0) + 1;
+          p.atk.hitIdx = i2;
+          this.combat.shootAlt(p, t, i2);
+        } else if (a === 'mh') {
           // 本人の画面で当たったパンチ（ずれを考えて少しゆるく見る）
           if (d > atk.range + (t.radius || 0.8) + 0.9 + (p.buffs.big > 0 ? 2.5 : 0) + 6) return;
           p.atk.hitIdx = idx;
@@ -296,6 +306,7 @@ export class HostMatch extends Match {
     p.cpu = true;
     p.peer = null;
     p.netIn = null;
+    this.setCpuLevel(p, this.diffKey);
     p.brain = new Brain(p, this, 'collector');
     p.displayName = (p.displayName || 'CPU').slice(0, 7) + '(CPU)';
     this.announce((m && m.name ? m.name : 'だれか') + ' の接続が切れた（CPUが代わりに戦う）', p.team);
@@ -334,6 +345,7 @@ export class HostMatch extends Match {
       p.atk.phase = s.atkPhase;
       p.atk.side = s.atkSide;
       p.atk.heavy = s.atkHeavy;
+      p.atk.shotNow = s.atkShot;
       p.turnVis = s.turnVis;
       p.ground = s.ground;
       if (s.just) p.justT = Math.max(p.justT, 0.06);
@@ -479,6 +491,7 @@ function writePuncher(w, p, M) {
   if (p.atk.side) f1 |= 16;
   if (p.atk.heavy) f1 |= 32;
   if (p.friend) f1 |= 64;
+  if (p.atk.shotNow && p.atk.phase >= 0) f1 |= 128; // v1.7：近接のキャラが遠くへ撃っている（撃つ動きで見せる）
   w.u8(f1);
   w.u8(stateNo(st));
   w.u8(p.life || 0);
@@ -535,6 +548,7 @@ function readPuncher(r) {
   o.atkSide = f1 & 16 ? 1 : 0;
   o.atkHeavy = !!(f1 & 32);
   o.friend = !!(f1 & 64);
+  o.atkShot = !!(f1 & 128);
   o.state = STATES[r.u8()] || 'hover';
   o.life = r.u8();
   o.pos = r.vec(new THREE.Vector3());
@@ -584,6 +598,12 @@ class ClientCombat extends Combat {
   shoot(p, t) {
     if (p !== this.match.player) return;
     this.match.act({ a: 'sh', r: refOf(t), i: p.atk.hitIdx || 0 });
+    this.match.sfx('shot', p);
+  }
+  // てつんどの遠くへの弾（k:1）
+  shootAlt(p, t, i) {
+    if (p !== this.match.player) return;
+    this.match.act({ a: 'sh', r: refOf(t), i: i || 0, k: 1 });
     this.match.sfx('shot', p);
   }
   damage() {
@@ -961,7 +981,7 @@ export class ClientMatch extends Match {
         const mesh = this.fx.projectileMesh({ kind: o.kind, owner: { team: o.team }, team: o.team, pos: o.pos });
         // t0：はじめて見えた時刻。ほかの人は少し前の姿で表示しているので、その人の弾は、その時刻になるまで見せない
         // 自分の弾（mine）は、自分と同じ「いま」の時刻で表示する（すぐ見える）
-        q = { mesh, pos: o.pos.clone(), vel: o.vel.clone(), ht: snap.ht, t0: snap.ht, mine: o.owner === this.player.netId, spin: o.kind === 'tangocho' ? 18 : o.kind === 'cookie' ? 9 : 0 };
+        q = { mesh, pos: o.pos.clone(), vel: o.vel.clone(), ht: snap.ht, t0: snap.ht, mine: o.owner === this.player.netId, spin: o.kind === 'tangocho' || o.kind === 'beat' ? 18 : o.kind === 'cookie' ? 9 : 0 };
         if (mesh) mesh.visible = q.mine;
         this.projs.set(o.id, q);
       }
@@ -1028,6 +1048,7 @@ export class ClientMatch extends Match {
       p.atk.phase = A.atkPhase >= 0 && B.atkPhase >= A.atkPhase ? lerp(A.atkPhase, B.atkPhase, k) : B.atkPhase;
       p.atk.side = B.atkSide;
       p.atk.heavy = B.atkHeavy;
+      p.atk.shotNow = B.atkShot;
       p.invuln = B.inv ? 0.5 : 0;
       p.stunT = B.stunT;
       p.hurtT = B.hurt ? 0.1 : 0;
@@ -1128,6 +1149,7 @@ export class ClientMatch extends Match {
     if (P.atk.side) f |= 16;
     if (P.atk.heavy) f |= 32;
     if (P.alive) f |= 64;
+    if (P.atk.shotNow && P.atk.phase >= 0) f |= 128;
     w.u8(f);
     w.u8(P.atk.phase < 0 ? 255 : Math.min(254, P.atk.phase * 254));
     w.i8(P.turnVis * 100);
@@ -1171,7 +1193,7 @@ export class ClientMatch extends Match {
         I.lookX = this.input.lookX;
         I.lookY = this.input.lookY;
         I.lookActive = this.input.looking();
-        for (const e of this.input.events) I.events.push(e);
+        for (const e of this.input.events) I.events.push((e.look && e.type === 'tap' && this.tapLock(e)) || e);
         this.input.events.length = 0;
       } else {
         P.intent.hold = false;

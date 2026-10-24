@@ -68,14 +68,17 @@ export class Guardian {
           best = p;
         }
       }
+      // 一人で遊ぶときは、敵のダルマの弾もCPUの強さに合わせる（いちばん弱いと撃たない）
+      const gk = this.match.guardK ? this.match.guardK(this.team) : 1;
+      if (best && gk <= 0) best = null;
       if (best) {
-        this.fireCd = 1.05;
+        this.fireCd = 1.05 / Math.max(0.4, Math.min(1, gk));
         _v.subVectors(best.pos, this.pos).normalize();
         this.match.combat.spawnProjectile({
           owner: this,
           pos: this.pos.clone().addScaledVector(_v, 4),
           vel: _v.clone().multiplyScalar(34),
-          dmg: 300,
+          dmg: Math.round(300 * Math.min(1, gk)),
           radius: 0.9,
           life: 1.0,
           kind: 'guardianShot',
@@ -302,14 +305,9 @@ export class Scramble {
   }
   update(dt, t) {
     this.field.update(dt, t);
-    // 預ける：ボタン長押し（CPUは近づけば自動）で1個ずつ
+    // 預ける：自分のダルマの近くにいると、自動で1個ずつ（v1.7：人もCPUと同じく自動に。前はボタンの長押し）
     for (const p of this.match.punchers) {
       if (!this.canDeposit(p)) {
-        this.depositT.set(p, 0);
-        continue;
-      }
-      const want = p.cpu ? true : p.depositHeld;
-      if (!want) {
         this.depositT.set(p, 0);
         continue;
       }

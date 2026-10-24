@@ -9,6 +9,8 @@
 // v1.5：キャラ18人。見た目は looks.js の値で決める（体・服・髪・顔・小物を名前と数で組み合わせる。LOOK_BASE・OUTFITS・BOTTOMS・
 //  HAIR_STYLES・FACE_STYLES・〜_ITEMS）。前からの3人は前とまったく同じ形。部品のまとめ（bakeModel）で、セル塗りとふちどりを
 //  それぞれ1回で描くようにした（1人 ~17回 → ~8回）。胸の柄 PRINTS、勝ちポーズ WIN_POSES、カットイン CUTIN_POSES、KO_EMOTE もキャラごと
+// v1.6：写真から10人を作り直した。髪は殻（shellGeo）＋毛すじの絵（hairTex）＋毛束（clumpOn）、メガネ（specs）、二重・細い目・ほくろ・ひげ、
+//  布の柄（PATTERNS）、ネクタイ・リュック・チェーン・ピアスなど（looks.js の先頭に一覧）
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { toon, cel, addOutline, outlineMat, roundedBox, canvasTex, lineColor } from './gfx.js';
@@ -25,6 +27,13 @@ function lathe(pts, seg = 16, sz = 1) {
   const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(Math.max(0.0001, r), y)), seg);
   if (sz !== 1) g.scale(1, 1, sz);
   g.computeVertexNormals();
+  return g;
+}
+// UV を何倍かにする（柄の布をくり返す回数をそろえる）
+function uvScale(g, su, sv) {
+  const uv = g.attributes.uv;
+  if (!uv) return g;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
   return g;
 }
 // 先細りのカプセル（関節から下に len）
@@ -77,9 +86,11 @@ function strandGeo(len, rad, bend = 0.6, flat = 0.55, twist = 0) {
 
 // アニメの頭の形：横を少しせまく、あごを細く前へ、後頭部を少し大きく
 // hp.jaw（0〜1）：ほお・あごを丸く（ぽっちゃり・やさしい顔）
+// hp.wide（0〜1）：ほおとあごを横に広げて、あご先を丸く（まるい顔）/ hp.long（0〜1）：顔の下半分を長く（面長）
 function headShape(v, R, hp) {
   const y = v.y / R;
   const jaw = (hp && hp.jaw) || 0;
+  const wide = (hp && hp.wide) || 0, long = (hp && hp.long) || 0;
   v.x *= 0.93;
   v.y *= 1.04;
   if (y < 0) {
@@ -93,8 +104,10 @@ function headShape(v, R, hp) {
       if (v.z > 0) v.z *= 1 - 0.12 * k;
       else v.z *= 1 - 0.3 * k;
     }
-    if (v.z > 0) v.z += R * 0.05 * smooth(-0.45, -1, y);
-    v.y -= R * 0.05 * k;
+    if (wide) v.x *= 1 + wide * (0.15 * Math.sin(Math.PI * Math.min(1, k * 1.15)) + 0.07 * k);
+    if (v.z > 0) v.z += R * 0.05 * smooth(-0.45, -1, y) * (1 - wide * 0.7);
+    v.y -= R * 0.05 * k * (1 - wide * 0.5);
+    if (long) v.y *= 1 + long * 0.16 * k;
   } else if (v.z < 0) v.z *= 1.06;
   return v;
 }
@@ -467,6 +480,17 @@ const EYE_TYPES = {
   tired: { w: 22, h: 22, iris: 0.8, lid: 0.5, tilt: -0.12 },
   droopy: { w: 22, h: 24, iris: 0.84, tilt: -0.24 },
   big: { w: 25, h: 30, iris: 0.85, sparkle: 2 },
+  // v1.6（写真から）：crease＝二重の線 / narrow＝攻撃・スペシャルでも細いまま
+  bigRound: { w: 24, h: 27, iris: 0.86, crease: 1 },
+  calmRound: { w: 22, h: 21, iris: 0.82, crease: 1, lid: 0.06 },
+  softBig: { w: 24, h: 27, iris: 0.86, crease: 1, sparkle: 1 },
+  narrow: { w: 24, h: 14, iris: 0.66, lid: 0.12, tilt: 0.02, narrow: 1 },
+  narrowSmile: { w: 24, h: 15, iris: 0.68, lid: 0.1, low: 0.3, tilt: 0.0, narrow: 1 },
+  sleepyN: { w: 23, h: 16, iris: 0.7, lid: 0.3, tilt: -0.03, narrow: 1 },
+  sharpN: { w: 24, h: 15, iris: 0.7, lid: 0.06, tilt: 0.13, narrow: 1 },
+  crinkle: { w: 23, h: 16, iris: 0.7, lid: 0.16, low: 0.42, tilt: -0.02, narrow: 1 },
+  happyN: { w: 23, h: 18, iris: 0.72, low: 0.48, tilt: 0.02, narrow: 1 },
+  crescent: { w: 23, h: 18, iris: 0.72, low: 0.48, narrow: 1, arc: 1 }, // ふだんから笑って細くなった目（∩）
 };
 const faceParamCache = new WeakMap();
 function faceParams(look) {
@@ -573,6 +597,17 @@ function eye2(ctx, x, y, side, look, o = {}) {
     ctx.lineTo(w * 1.28, -h * 0.82);
   }
   ctx.stroke();
+  if (o.crease) {
+    // 二重の線（上まぶたの少し上に、細く）
+    const cy = (lid ? lidY : -h * 0.95) - h * 0.32 - 3;
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = 'rgba(70,35,40,0.75)';
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.7, cy + h * 0.32);
+    ctx.quadraticCurveTo(w * 0.05, cy - h * 0.12, w * 1.02, cy + h * 0.18);
+    ctx.stroke();
+    ctx.strokeStyle = INK;
+  }
   if (o.lash) {
     // まつげの先（目じりに2本）
     const ty = lid ? lidY : -h * 0.7;
@@ -748,6 +783,34 @@ function mouth2(ctx, type, cx, my) {
       ctx.stroke();
       break;
     }
+    case 'flat':
+      // まっすぐの口（真顔）
+      mouthLine(ctx, cx + 2, my - 6, s, 13, 1.5, { lw: 4.4 });
+      break;
+    case 'pout':
+    case 'lips': {
+      // ふっくらしたくちびる（閉じた口）。lips：もっと厚い（ちじわ）
+      const k = type === 'lips' ? 1.55 : 1;
+      ctx.fillStyle = type === 'lips' ? 'rgba(222,88,96,0.85)' : 'rgba(226,112,118,0.78)';
+      ctx.beginPath();
+      ctx.ellipse(cx + 2, my - 7 + 6 * k, 15 * k, 6.5 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (type === 'lips') {
+        ctx.beginPath();
+        ctx.ellipse(cx + 2, my - 9, 16, 5, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(255,215,215,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(cx - 2, my - 8 + 5 * k, 6 * k, 2.2 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      mouthLine(ctx, cx + 2, my - 7, s, 14 * k, 2, { lw: 3.6, color: '#7a3236' });
+      break;
+    }
+    case 'beam':
+      // 大きく笑って上の歯を見せる
+      mouthOpen(ctx, cx, my - 10, s, 42, 27, { shape: 'D', teeth: 0.74 });
+      break;
     case 'smile':
     default:
       mouthLine(ctx, cx + 2, my - 6, s, 17, 9);
@@ -786,8 +849,38 @@ function drawFace2(ctx, look, fp, ex) {
   const s = 1;
   const cx = 128, ey = 132, sx = fp.sx || 46, my = 205;
   const E = EYE_TYPES[fp.eye] || EYE_TYPES.round;
-  const eo = { ...E, w: fp.ew || E.w, h: fp.eh || E.h, iris: fp.iris || E.iris, tilt: fp.tilt != null ? fp.tilt : E.tilt || 0, lash: !!fp.lash, lowLash: !!(fp.lowLash || fp.lash) };
+  const eo = { ...E, w: fp.ew || E.w, h: fp.eh || E.h, iris: fp.iris || E.iris, tilt: fp.tilt != null ? fp.tilt : E.tilt || 0, lid: fp.lid != null ? fp.lid : E.lid || 0, low: fp.low != null ? fp.low : E.low || 0, lash: !!fp.lash, lowLash: !!(fp.lowLash || fp.lash), crease: fp.crease != null ? fp.crease : E.crease || 0 };
+  const narrow = !!(fp.narrow != null ? fp.narrow : E.narrow);
   ctx.lineJoin = 'round';
+  // ひげのそりあと（口のまわりを うすく青く）
+  if (fp.stubble) {
+    const k = fp.stubble;
+    const r = rng(41);
+    for (const [y, w, h] of [[my - 17, 24, 6], [my + 20, 26, 12]]) {
+      const g = ctx.createRadialGradient(cx + 2, y, 2, cx + 2, y, w);
+      g.addColorStop(0, `rgba(80,90,120,${0.13 * k})`);
+      g.addColorStop(1, 'rgba(80,90,120,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(cx + 2, y, w, h, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = `rgba(60,64,86,${0.26 * k})`;
+    for (let i = 0; i < 46; i++) {
+      const a = r() * Math.PI * 2, rr = Math.sqrt(r());
+      const up = i < 16;
+      const x = cx + 2 + Math.cos(a) * rr * (up ? 21 : 23);
+      const y = up ? my - 17 + Math.sin(a) * rr * 5 : my + 20 + Math.sin(a) * rr * 11;
+      ctx.fillRect(x, y, 1.3, 1.3);
+    }
+  }
+  // ほくろ
+  if (fp.mole) {
+    ctx.fillStyle = 'rgba(60,35,30,0.9)';
+    ctx.beginPath();
+    ctx.arc(cx + fp.mole[0], ey + fp.mole[1], 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
   const nose = () => {
     if (fp.nose === 'red') {
       ctx.fillStyle = 'rgba(255,105,115,0.8)';
@@ -842,13 +935,14 @@ function drawFace2(ctx, look, fp, ex) {
     }
   };
   // スペシャルの顔：クール系（不敵な笑み・金色のキラキラの目）か、熱い系（さけぶ・水色に光る目）
-  const coolSp = fp.mouth === 'smirk' || fp.mouth === 'small' || fp.mouth === 'soft' || !!fp.sparkle;
+  const coolSp = fp.mouth === 'smirk' || fp.mouth === 'small' || fp.mouth === 'soft' || fp.mouth === 'flat' || fp.mouth === 'pout' || fp.mouth === 'lips' || !!fp.sparkle;
   const glowC = coolSp ? 'rgba(255,236,150,0.65)' : 'rgba(130,245,255,0.7)';
   switch (ex) {
     case FACES.neutral:
     case FACES.blink: {
       brows(fp.brow || 0);
-      if (ex === FACES.blink) shut(fp.eye === 'smiley', 6, 21);
+      if (E.arc) shut(true, 2, 23); // 笑った目（まばたきも同じ）
+      else if (ex === FACES.blink) shut(fp.eye === 'smiley', 6, 21);
       else eyes(eo, 2);
       nose();
       mouth2(ctx, fp.mouth, cx, my);
@@ -857,7 +951,7 @@ function drawFace2(ctx, look, fp, ex) {
     }
     case FACES.attack: {
       brows(0.42 + Math.max(0, fp.brow || 0) * 0.35, 6, 26, 0);
-      eyes({ ...eo, h: Math.min(eo.h, 19) * 0.82, lid: 0, low: 0, tilt: 0.14 + Math.max(0, eo.tilt) * 0.5, iris: Math.min(eo.iris, 0.74), sparkle: 0 }, 6);
+      eyes({ ...eo, h: narrow ? Math.max(11, eo.h * 0.85) : Math.min(eo.h, 19) * 0.82, lid: 0, low: 0, tilt: 0.14 + Math.max(0, eo.tilt) * 0.5, iris: Math.min(eo.iris, 0.74), sparkle: 0 }, 6);
       nose();
       if (fp.mouth === 'growl') teethMouth(ctx, cx, my - 5, 27, 18, false);
       else mouthOpen(ctx, cx, my - 4, s, 30, 24, { shape: 'D', teeth: 0.6 });
@@ -909,7 +1003,7 @@ function drawFace2(ctx, look, fp, ex) {
       brows(bt, 14, 25, 0);
       eyeGlow(ctx, cx - sx, ey + 6, s, glowC);
       eyeGlow(ctx, cx + sx, ey + 6, s, glowC);
-      eyes({ ...eo, w: 24, h: Math.max(22, Math.min(eo.h, 28)), lid: 0, low: 0, iris: 0.84, glow: true, sparkle: cool ? 1 : 0, tilt: cool ? Math.max(0, eo.tilt) : 0.12 }, 6);
+      eyes({ ...eo, w: 24, h: narrow ? eo.h + 4 : Math.max(22, Math.min(eo.h, 28)), lid: 0, low: 0, iris: narrow ? 0.74 : 0.84, glow: true, sparkle: cool ? 1 : 0, tilt: cool ? Math.max(0, eo.tilt) : 0.12 }, 6);
       nose();
       if (cool) mouthLine(ctx, cx + 4, my - 8, s, 20, 9, { lift: -7 });
       else mouthOpen(ctx, cx, my - 10, s, 38, 30, { shape: 'D', teeth: 0.55 });
@@ -918,7 +1012,7 @@ function drawFace2(ctx, look, fp, ex) {
     }
     case FACES.sad: {
       brows(-0.32, 2, 24, 0);
-      eyes({ ...eo, h: Math.min(eo.h, 20), lid: Math.max(eo.lid || 0, 0.1), low: 0, tilt: Math.min(0, eo.tilt) - 0.08, lookY: 0.6, sparkle: 0 }, 6);
+      eyes({ ...eo, h: narrow ? eo.h : Math.min(eo.h, 20), lid: Math.max(eo.lid || 0, 0.1), low: 0, tilt: Math.min(0, eo.tilt) - 0.08, lookY: 0.6, sparkle: 0 }, 6);
       nose();
       mouthLine(ctx, cx, my, s, 15, -8);
       ctx.fillStyle = 'rgba(120,180,255,0.35)';
@@ -1092,10 +1186,10 @@ function drawFace(ctx, look, ex) {
 const LOOK_BASE = {
   skin: 0xf2c4a0, hair: 0x2a211d, shirt: 0xe9edf2, sleeve: null, pants: 0x2f3442, shoe: 0xf4f4f4, shoeAccent: 0x3a3f4a, eye: 0x3b2418,
   hairStyle: 'short', face: 'calm', height: 1, build: 1, blush: false, shortSleeve: false, extra: null,
-  female: false, headScale: 1, shoulder: 1, slope: 0, arm: 1, leg: 1, limb: 1, belly: 0, jaw: 0, neck: 1,
+  female: false, headScale: 1, shoulder: 1, slope: 0, arm: 1, leg: 1, limb: 1, belly: 0, jaw: 0, neck: 1, faceW: 0, faceL: 0,
   outfit: 'tee', sleeves: null, bottom: null, items: null, belt: 0x24232a,
 };
-const NUM_RANGE = { height: [0.6, 1.6], build: [0.6, 1.8], headScale: [0.6, 1.4], shoulder: [0.6, 1.6], slope: [0, 1], arm: [0.6, 1.8], leg: [0.6, 1.8], limb: [0.8, 1.3], belly: [0, 1], jaw: [0, 1], neck: [0.6, 1.8] };
+const NUM_RANGE = { height: [0.6, 1.6], build: [0.6, 1.8], headScale: [0.6, 1.4], shoulder: [0.6, 1.6], slope: [0, 1], arm: [0.6, 1.8], leg: [0.6, 1.8], limb: [0.8, 1.3], belly: [0, 1], jaw: [0, 1], neck: [0.6, 1.8], faceW: [0, 1], faceL: [0, 1] };
 const lookCache = new WeakMap();
 export function normLook(look) {
   const src = look && typeof look === 'object' ? look : null;
@@ -1108,7 +1202,7 @@ export function normLook(look) {
     L[k] = clamp(L[k], a, b);
   }
   if (L.sleeve == null) L.sleeve = L.shirt;
-  if (!L.sleeves) L.sleeves = L.outfit === 'tank' ? 'none' : L.shortSleeve ? 'short' : 'long';
+  if (!L.sleeves) L.sleeves = L.outfit === 'tank' || L.outfit === 'bare' ? 'none' : L.shortSleeve ? 'short' : 'long';
   if (!L.bottom) L.bottom = L.extra === 'goggles' ? 'shorts' : 'pants';
   const items = new Set(Array.isArray(L.items) ? L.items : []);
   if (L.extra) items.add(L.extra);
@@ -1193,9 +1287,10 @@ export function buildPuncher(def, teamIdx) {
   const C = (color, shade = 'cool', o = {}) => toon(color, { char: true, shade, rim: o.rim != null ? o.rim : 0.55, rimColor: o.rimColor != null ? o.rimColor : rimC.getHex(), ...o });
   const mSkin = C(look.skin, 'skin', { rim: 0.3, rimColor: 0xffe8dc });
   // 柄の服（アロハなど）は、柄の絵を貼ったセル塗り（描く回数が1回ふえる）
-  const mShirt = look.pattern ? texCel({ char: true, shade: 'cool', rim: 0.55, rimColor: rimC.getHex(), map: patternTex(look.pattern, look.shirt) }) : C(look.shirt);
-  const mSleeve = look.pattern && look.sleeve === look.shirt ? mShirt : C(look.sleeve);
-  const mPants = C(look.pants);
+  const mShirt = look.pattern ? texCel({ char: true, shade: 'cool', rim: 0.55, rimColor: rimC.getHex(), map: patternTex(look.pattern, look.shirt) }) : C(look.shirt, look.shirtShade || 'cool');
+  const mSleeve = look.pattern && look.sleeve === look.shirt ? mShirt : C(look.sleeve, look.shirtShade || 'cool');
+  // 柄のズボン（しょうたの短パンなど）
+  const mPants = look.pantsPattern ? texCel({ char: true, shade: 'cool', rim: 0.55, rimColor: rimC.getHex(), map: patternTex(look.pantsPattern, look.pants) }) : C(look.pants);
   const mShoe = C(look.shoe);
   const mAcc = C(look.shoeAccent);
   const mSole = C(0xf2f0ee, 'cool', { rim: 0.2 });
@@ -1206,7 +1301,7 @@ export function buildPuncher(def, teamIdx) {
   // 新しい部品用：色から材質とふちどりを作る
   const part = (geo, color, w = OW, shade = 'cool', o = {}) => mesh(geo, C(color, shade, o), L(color), w);
   const skinPart = (geo, w = OW) => mesh(geo, mSkin, L(look.skin), w);
-  const K = { look, has, fem, team, C, part, skinPart, mSkin, mShirt, mSleeve, mPants, mHair, L, chest, body, root };
+  const K = { look, has, fem, team, C, part, skinPart, mSkin, mShirt, mSleeve, mPants, mHair, L, chest, body, root, rimHex: rimC.getHex() };
 
   // ---- 胴（胸のふくらみと腰のくびれ）----
   const bw = look.build;
@@ -1224,13 +1319,14 @@ export function buildPuncher(def, teamIdx) {
   K.capR = capR;
   K.shX = 0.172 * bw * sh;
   K.shY = 0.255 - sl * 0.04;
-  const torsoMat = outfit === 'tank' ? mSkin : outfit === 'open' ? C(look.inner != null ? look.inner : 0xf4f3ef) : mShirt;
-  const torsoCol = outfit === 'tank' ? look.skin : outfit === 'open' ? (look.inner != null ? look.inner : 0xf4f3ef) : look.shirt;
+  const bareTop = outfit === 'tank' || outfit === 'bare' || (outfit === 'open' && !!look.innerTank); // innerTank：前のあいたシャツの中がタンクトップ（首まわりははだ）
+  const torsoMat = bareTop ? mSkin : outfit === 'open' ? C(look.inner != null ? look.inner : 0xf4f3ef) : mShirt;
+  const torsoCol = bareTop ? look.skin : outfit === 'open' ? (look.inner != null ? look.inner : 0xf4f3ef) : look.shirt;
   const torsoG = bellyBulge(lathe(prof, 18, 0.7), look.belly, -0.02, 0.36);
   const torso = mesh(torsoG, torsoMat, L(torsoCol));
   torso.position.y = -0.2;
   chest.add(torso);
-  if (outfit !== 'tank') {
+  if (!bareTop) {
     // すそ（Tシャツの下のふち）
     const hem = mesh(new THREE.TorusGeometry(0.128 * bw, 0.018, 6, 20), torsoMat, L(torsoCol), 0.01);
     hem.rotation.x = Math.PI / 2;
@@ -1264,7 +1360,7 @@ export function buildPuncher(def, teamIdx) {
     }
   }
   print.renderOrder = 2;
-  chest.add(print);
+  if (look.print !== false) chest.add(print); // print: false は柄なし（写真の服に柄がない）
   // 腰（ズボン）
   const hipsG = lathe(
     [
@@ -1278,6 +1374,7 @@ export function buildPuncher(def, teamIdx) {
     16,
     0.74
   );
+  if (look.pantsPattern) uvScale(hipsG, 3.2, 1);
   const hips = mesh(hipsG, mPants, L(look.pants));
   hips.position.y = 0.0;
   body.add(hips);
@@ -1301,7 +1398,7 @@ export function buildPuncher(def, teamIdx) {
   head.position.y = 0.55 - (1 - hs) * 0.12;
   if (hs !== 1) head.scale.setScalar(hs);
   chest.add(head);
-  const HP = { jaw: look.jaw };
+  const HP = { jaw: look.jaw, wide: look.faceW, long: look.faceL };
   K.head = head;
   K.HP = HP;
   const headG = new THREE.SphereGeometry(HEAD_R, 30, 24);
@@ -1381,7 +1478,33 @@ export function buildPuncher(def, teamIdx) {
     head.add(glasses);
     root.userData.glasses = glasses;
   }
-  if (has('goggles')) {
+  if (has('goggles') && look.gogglesAt === 'neck') {
+    // エブン（v1.6）：プールのゴーグルを首にかける（写真のふわっとした前髪をかくさない）
+    const strap = mesh(new THREE.TorusGeometry(0.098 * look.neck, 0.011, 6, 30), C(0x14161c, 'cool', { rim: 0.3 }), 0x0b0c10, 0.006);
+    strap.rotation.x = Math.PI / 2 - 0.5;
+    strap.position.set(0, 0.3, -0.004);
+    chest.add(strap);
+    for (const sx of [-1, 1]) {
+      const g = new THREE.Group();
+      g.position.copy(torsoPt(K, 0.405, sx * 0.24, 0.024));
+      g.rotation.set(-0.35, sx * 0.24, sx * 0.08);
+      chest.add(g);
+      const frame = mesh(new THREE.SphereGeometry(0.05, 16, 12), C(0x1a1d24), 0x0b0c10, 0.007);
+      frame.scale.set(1.2, 0.82, 0.5);
+      g.add(frame);
+      const lens = new THREE.Mesh(new THREE.SphereGeometry(0.042, 16, 12), C(0x2f7fe0, 'cool', { rim: 0.9, rimColor: 0xbfe8ff }));
+      lens.scale.set(1.15, 0.76, 0.42);
+      lens.position.z = 0.012;
+      g.add(lens);
+      const shine = new THREE.Mesh(new THREE.CircleGeometry(0.01, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      shine.position.set(-0.015, 0.012, 0.031);
+      g.add(shine);
+    }
+    const nb = mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.05, 6), C(0x14161c), 0x0b0c10, 0.004);
+    nb.rotation.z = Math.PI / 2;
+    nb.position.copy(torsoPt(K, 0.405, 0, 0.03));
+    chest.add(nb);
+  } else if (has('goggles')) {
     // エブン：プールのゴーグル（おでこにかけている）
     const strap = new THREE.Mesh(new THREE.TorusGeometry(HEAD_R * 1.06, 0.014, 6, 32), C(0x14161c, 'cool', { rim: 0.3 }));
     strap.rotation.x = Math.PI / 2 - 0.42;
@@ -1586,6 +1709,7 @@ function patternTex(kind, color) {
     const base = '#' + new THREE.Color(color).getHexString();
     ctx.fillStyle = base;
     ctx.fillRect(0, 0, 256, 256);
+    if (kind !== 'aloha' && PATTERNS[kind]) return PATTERNS[kind](ctx, color, base);
     // ハイビスカスと葉（はしでつながるように、まわりにも描く）
     const flower = (x, y, r, rot, c1, c2) => {
       for (const dx of [-256, 0, 256])
@@ -1633,7 +1757,103 @@ function patternTex(kind, color) {
   return t;
 }
 
+// v1.6 布の柄（写真から）。どれも 256×256 で、はしがつながる
+const PATTERNS = {
+  // てつんど：青のオンブレチェック（ぼかした太いしまが、たてと横に重なる）
+  ombre(ctx, color) {
+    const dk = 'rgba(28,38,66,';
+    const band = (horiz, at, wid, a) => {
+      for (const d of [-256, 0, 256]) {
+        const c0 = at + d;
+        const g = horiz ? ctx.createLinearGradient(0, c0 - wid, 0, c0 + wid) : ctx.createLinearGradient(c0 - wid, 0, c0 + wid, 0);
+        g.addColorStop(0, dk + '0)');
+        g.addColorStop(0.35, dk + a * 0.7 + ')');
+        g.addColorStop(0.5, dk + a + ')');
+        g.addColorStop(0.65, dk + a * 0.7 + ')');
+        g.addColorStop(1, dk + '0)');
+        ctx.fillStyle = g;
+        if (horiz) ctx.fillRect(0, c0 - wid, 256, wid * 2);
+        else ctx.fillRect(c0 - wid, 0, wid * 2, 256);
+      }
+    };
+    band(false, 64, 58, 0.78);
+    band(true, 64, 58, 0.72);
+    band(false, 190, 22, 0.42);
+    band(true, 190, 22, 0.38);
+    // 細い線
+    ctx.strokeStyle = 'rgba(20,26,44,0.35)';
+    ctx.lineWidth = 2;
+    for (const x of [24, 104, 150, 230]) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, x); ctx.lineTo(256, x); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(235,242,255,0.22)';
+    ctx.lineWidth = 1.5;
+    for (const x of [128, 250]) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, x); ctx.lineTo(256, x); ctx.stroke();
+    }
+  },
+  // ちじわ：白いワッフル（細かい格子）
+  waffle(ctx) {
+    ctx.strokeStyle = 'rgba(120,110,95,0.16)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 256; i += 10.67) {
+      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 256); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(256, i); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    for (let x = 0; x < 256; x += 10.67) for (let y = 0; y < 256; y += 10.67) ctx.fillRect(x + 3, y + 3, 4, 4);
+  },
+  // トリキ：色落ちしたデニム（ななめの綾目と、明るいむら）
+  denim(ctx) {
+    const r = rng(9);
+    for (let i = 0; i < 7; i++) {
+      const x = r() * 256, y = r() * 256, rr = 40 + r() * 60;
+      for (const dx of [-256, 0, 256])
+        for (const dy of [-256, 0, 256]) {
+          const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, rr);
+          g.addColorStop(0, 'rgba(225,235,245,0.16)');
+          g.addColorStop(1, 'rgba(225,235,245,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(x + dx - rr, y + dy - rr, rr * 2, rr * 2);
+        }
+    }
+    ctx.strokeStyle = 'rgba(20,32,52,0.16)';
+    ctx.lineWidth = 1.6;
+    for (let i = -256; i < 512; i += 6) {
+      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 256, 256); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(240,246,252,0.1)';
+    for (let i = -253; i < 512; i += 12) {
+      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 256, 256); ctx.stroke();
+    }
+  },
+  // しょうた：赤い短パンの白い小さな柄（細かくならべる）
+  redPrint(ctx) {
+    ctx.fillStyle = '#fbf6f2';
+    const n = 8, st = 256 / n;
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const x = i * st + (j % 2 ? st / 2 : 0) + st / 2, y = j * st + st / 2;
+        // 小さな白いしずくと点
+        ctx.beginPath();
+        ctx.ellipse(x, y - 3, 4.2, 6.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(x - 1.4, y + 3, 2.8, 6);
+      }
+    ctx.fillStyle = 'rgba(30,20,24,0.85)';
+    for (const [i, j] of [[2, 1], [6, 4], [3, 6]]) {
+      const x = i * st + (j % 2 ? st / 2 : 0) + st / 2, y = j * st + st / 2;
+      ctx.beginPath();
+      ctx.ellipse(x, y - 3, 4.2, 6.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+};
 const OUTFITS = {
+  // v1.6 上半身はだか（しょうた）。胴ははだの色（体の線は胸のプリントでかく）
+  bare() {},
   // Tシャツ（前からの形）
   tee(K) {
     const { look, chest, has } = K;
@@ -1641,6 +1861,27 @@ const OUTFITS = {
     collar.rotation.x = Math.PI / 2 - 0.25;
     collar.position.set(0, 0.29, 0.01);
     chest.add(collar);
+    if (look.stitch != null) {
+      // ちじわ：黒いロックミシンのぬい目（えりのまわりと、肩のぬい目）
+      const sc = look.stitch;
+      const ring = [];
+      const N = 64;
+      const e = new THREE.Euler(Math.PI / 2 - 0.25, 0, 0);
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        const rr = 0.087 + (i % 2 ? 0.005 : -0.003);
+        ring.push(new THREE.Vector3(Math.cos(a) * rr, Math.sin(a) * rr, 0.004).applyEuler(e).add(new THREE.Vector3(0, 0.29, 0.01)));
+      }
+      chest.add(K.part(tubeGeo(ring, 0.0028, true, 192, 4), sc, 0.002));
+      for (const sd of [-1, 1]) {
+        const pts = [];
+        for (let i = 0; i <= 18; i++) {
+          const u = i / 18;
+          pts.push(torsoPt(K, 0.488 - 0.085 * u + (i % 2 ? 0.006 : -0.004), sd * (0.78 + 0.8 * u), 0.006));
+        }
+        chest.add(K.part(tubeGeo(pts, 0.0026, false, 72, 4), sc, 0.002));
+      }
+    }
   },
   // タンクトップ・バスケのユニフォーム：前はU字、横は肩の上まで、後ろは首の下
   tank(K) {
@@ -1758,8 +1999,9 @@ const OUTFITS = {
     const coat = !!look.coat;
     const pat = !!look.pattern;
     const lapel = look.lapel || (coat ? 'wide' : pat ? 'wide' : 'band');
-    const yLow = coat ? -0.21 : -0.04, yHigh = 0.505;
-    const gTop = coat ? 0.4 : pat ? 0.42 : 0.5, gBot = coat ? 0.3 : pat ? 0.22 : 0.07;
+    const yLow = coat ? -0.21 : look.crop ? (look.cropY != null ? look.cropY : 0.035) : -0.04, yHigh = 0.505;
+    const gk = look.gapK || 1;
+    const gTop = (coat ? 0.4 : pat ? 0.42 : 0.5) * gk, gBot = (coat ? 0.3 : pat ? 0.22 : 0.07) * gk;
     const gap = (y) => gBot + (gTop - gBot) * smooth(0.05, 0.45, y);
     const rf = (y) => {
       let r = bandR(prof, y);
@@ -1768,13 +2010,30 @@ const OUTFITS = {
       if (y < 0) r += -y * (coat ? 0.32 : 0.2);
       return r + 0.012;
     };
-    // 中の服のえり
+    // 中の服のえり（タンクトップのときは、U字の胸元）
     const inner = look.inner != null ? look.inner : 0xf4f3ef;
-    const ic = K.part(new THREE.TorusGeometry(0.068, 0.016, 6, 16), inner, 0.01);
-    ic.rotation.x = Math.PI / 2 - 0.25;
-    ic.position.set(0, 0.29, 0.01);
-    K.chest.add(ic);
-    const g = bellyBulge(wrapGeo({ levels: levelsFor(prof, yLow, yHigh, 0.025), cols: 44, yr: () => [yLow, yHigh], ph: (u, y) => gap(y) + (Math.PI * 2 - 2 * gap(y)) * u, rf, uRep: 4, vRep: 2 }), look.belly, -0.02, 0.36);
+    if (look.innerTank) {
+      const yTop = (ph) => {
+        const c = Math.cos(ph), sd = Math.abs(Math.sin(ph));
+        const base = 0.33 - 0.05 * c;
+        return base + smooth(0.45, 0.95, sd) * (0.5 - base);
+      };
+      const PH = (u) => Math.PI + u * Math.PI * 2;
+      const tg = bellyBulge(wrapGeo({ levels: levelsFor(prof, -0.015, 0.5, 0.025), cols: 44, closed: true, yr: (u) => [-0.015, yTop(PH(u))], ph: PH, rf: (y) => bandR(prof, y) + 0.004 }), look.belly, -0.02, 0.36);
+      onTorso(K, tg, inner);
+      const hm = K.part(new THREE.TorusGeometry(0.128 * look.build, 0.018, 6, 20), inner, 0.01);
+      hm.rotation.x = Math.PI / 2;
+      hm.scale.set(1, 0.7, 1);
+      hm.position.y = -0.2;
+      K.chest.add(hm);
+    } else {
+      const ic = K.part(new THREE.TorusGeometry(0.068, 0.016, 6, 16), inner, 0.01);
+      ic.rotation.x = Math.PI / 2 - 0.25;
+      ic.position.set(0, 0.29, 0.01);
+      K.chest.add(ic);
+    }
+    const pr = look.patRep || 4;
+    const g = bellyBulge(wrapGeo({ levels: levelsFor(prof, yLow, yHigh, 0.025), cols: 44, yr: () => [yLow, yHigh], ph: (u, y) => gap(y) + (Math.PI * 2 - 2 * gap(y)) * u, rf, uRep: pr, vRep: pr / 2 }), look.belly, -0.02, 0.36);
     onTorso(K, g, look.shirt, OW, K.mShirt);
     // えり（あきのふちを外に折りかえす）
     const y0 = lapel === 'wide' ? 0.2 : yLow, wMax = lapel === 'wide' ? (coat ? 0.36 : 0.34) : 0.075;
@@ -1791,9 +2050,60 @@ const OUTFITS = {
     back.rotation.set(Math.PI / 2 - 0.3, 0, Math.PI * 0.5 + Math.PI * 0.625);
     back.position.set(0, 0.292, -0.01);
     K.chest.add(back);
-    if (lapel === 'band') {
+    if (look.crop) {
+      // 短い上着のすその帯（デニムジャケット）
+      const wb = bellyBulge(wrapGeo({ levels: levelsFor(prof, yLow, yLow + 0.04, 0.02), cols: 40, yr: () => [yLow, yLow + 0.04], ph: (u, y) => gap(y) + (Math.PI * 2 - 2 * gap(y)) * u, rf: (y) => rf(y) + 0.006, uRep: 4, vRep: 0.3 }), look.belly, -0.02, 0.36);
+      onTorso(K, wb, darker(look.shirt, 0.92), 0.008, pat ? K.mShirt : null);
+    }
+    if (look.zipEdge) {
+      // ファスナーのふち（黒い上着）
+      for (const sd of [-1, 1]) {
+        const ph = sd > 0 ? (u, y) => gap(y) + 0.012 + 0.028 * u : (u, y) => Math.PI * 2 - gap(y) - 0.04 + 0.028 * u;
+        const zg = bellyBulge(wrapGeo({ levels: levelsFor(prof, yLow, yHigh - 0.02, 0.025), cols: 2, yr: () => [yLow, yHigh - 0.02], ph, rf: (y) => rf(y) + 0.008 }), look.belly, -0.02, 0.36);
+        onTorso(K, zg, look.zipEdge === true ? 0x3e4049 : look.zipEdge, 0.004);
+      }
+    }
+    if (look.collarPts) {
+      // デニムジャケットのえり（とがった、折りかえしたえり）
+      for (const sd of [-1, 1]) {
+        const shp = new THREE.Shape();
+        shp.moveTo(0, 0);
+        shp.lineTo(sd * 0.085, 0.01);
+        shp.lineTo(sd * 0.04, -0.1);
+        shp.closePath();
+        const m = pat ? mesh(new THREE.ExtrudeGeometry(shp, { depth: 0.009, bevelEnabled: false }), K.mShirt, K.L(look.shirt), 0.007) : K.part(new THREE.ExtrudeGeometry(shp, { depth: 0.009, bevelEnabled: false }), look.shirt, 0.007);
+        const p = torsoPt(K, 0.48, sd * 0.5, 0.02);
+        m.position.set(p.x - sd * 0.02, p.y + 0.012, p.z);
+        m.rotation.set(-0.62, sd * 0.42, sd * 0.05);
+        K.chest.add(m);
+      }
+    }
+    if (look.pockets) {
+      // 胸のフラップポケット（ボタンつき）
+      for (const sd of [-1, 1]) {
+        const ph = sd * (gap(0.34) + 0.36);
+        const q = torsoPt(K, 0.34, ph, rf(0.34) - bandR(prof, 0.34) + 0.006);
+        const f = pat ? mesh(roundedBox(0.075, 0.032, 0.01, 0.004, 1), K.mShirt, K.L(look.shirt), 0.005) : K.part(roundedBox(0.075, 0.032, 0.01, 0.004, 1), look.shirt, 0.005);
+        f.position.copy(q);
+        f.rotation.y = ph;
+        K.chest.add(f);
+        const b = K.part(new THREE.SphereGeometry(0.0075, 8, 6), look.button != null ? look.button : 0xb9864a, 0.003);
+        b.position.copy(torsoPt(K, 0.333, ph, rf(0.34) - bandR(prof, 0.34) + 0.013));
+        K.chest.add(b);
+        // ポケットのたてのぬい目（2本）
+        for (const dx of [-0.03, 0.03]) {
+          const sm = K.part(roundedBox(0.004, 0.14, 0.003, 0.001, 1), darker(look.shirt, 0.8), 0.002);
+          const qq = torsoPt(K, 0.24, ph + dx * 2.2, rf(0.24) - bandR(prof, 0.24) + 0.005);
+          sm.position.copy(qq);
+          sm.rotation.y = ph + dx * 2.2;
+          K.chest.add(sm);
+        }
+      }
+    }
+    if (lapel === 'band' && look.button !== false && !look.zipEdge) {
       // カーディガンのボタン
       for (const y of [0.03, 0.11, 0.19, 0.27]) {
+        if (y < yLow + 0.02) continue;
         const b = K.part(new THREE.SphereGeometry(0.009, 8, 6), look.button != null ? look.button : 0xf6f1e6, 0.004);
         const ph = gap(y) + 0.04;
         b.position.copy(torsoPt(K, y, ph, rf(y) - bandR(prof, y) + 0.012));
@@ -1962,11 +2272,14 @@ const BOTTOMS = {
     sock.position.y = -0.3 * G.limb;
     G.knee.add(sock);
   },
-  // 短パン（太ももの上まで）
+  // 短パン（太ももの上まで）。shortLen：長さ（しょうたはひざの上まで）/ shortR：太さ
   short(K, G) {
     bareLegs(K, G);
     const lt = G.lt;
-    const sh = mesh(lathe([[0.086 * lt, -0.126], [0.091 * lt, -0.12], [0.093 * lt, -0.05], [0.088 * lt, 0.045]], 14), K.mPants, K.L(K.look.pants), 0.01);
+    const sl = K.look.shortLen || 0.126, sr = K.look.shortR || 1;
+    const sg = lathe([[0.086 * lt * sr, -sl], [0.091 * lt * sr, -sl + 0.006], [0.093 * lt * sr, -0.05], [0.088 * lt * sr, 0.045]], 16);
+    if (K.look.pantsPattern) uvScale(sg, 1.6, (sl + 0.045) / 0.2);
+    const sh = mesh(sg, K.mPants, K.L(K.look.pants), 0.01);
     G.hip.add(sh);
     if (K.look.trim != null && K.outfit !== 'zip') {
       const t = K.part(new THREE.TorusGeometry(0.09 * lt, 0.006, 5, 16), K.look.trim, 0.004);
@@ -2051,6 +2364,12 @@ const BOTTOMS = {
     G.knee.add(hem);
   },
 };
+// 耳たぶの小さなスタッド（銀）。sd：-1＝右耳 / 1＝左耳
+function earStud(K, sd) {
+  const st = K.part(new THREE.SphereGeometry(0.0072, 10, 8), 0xe6e9ef, 0.002, 'cool', { rim: 0.95, rimColor: 0xffffff });
+  st.position.set(sd * HEAD_R * 0.93, -0.06, 0.006);
+  K.head.add(st);
+}
 // 小物（頭・手・足・体）。items の名前で呼ばれる
 const HEAD_ITEMS = {
   // はやた：頭の上に押し上げたスポーツサングラス（ミラーのレンズ。つるは頭のてっぺんへ）
@@ -2094,7 +2413,7 @@ const HEAD_ITEMS = {
     const st = K.part(new THREE.CylinderGeometry(ro + 0.0045, ro + 0.0045, 0.012, 30, 1, true), K.look.trim != null ? K.look.trim : 0xe8331f, 0.003);
     g.add(st);
   },
-  // たかのぶ：ねじりはちまき（紅白のねじれた手ぬぐい・前に結び目）
+  // ねじりはちまき（紅白のねじれた手ぬぐい・前に結び目）。v1.5 のなお（いまは使っていない）
   twistBand(K) {
     const R = HEAD_R;
     const g = new THREE.Group();
@@ -2160,10 +2479,126 @@ const HEAD_ITEMS = {
       }
     }
   },
+  // v1.6 メガネ（写真から）。look.specs = { shape: 'round'・'boston'・'octa', w・h：レンズの半分の幅・高さ, t：ふちの太さ, color,
+  //  top・topT：上ぶち（ブロー）の色と太さ, rivet：鋲の色, metal：細い金属（鼻パッドつき）, y：高さ, sep：左右のレンズの中心, tilt：顔にそわせる角度 }
+  specs(K) {
+    const sp = K.look.specs || {};
+    const R = HEAD_R;
+    const w = sp.w || 0.062, h = sp.h || 0.054, t = sp.t || 0.0075;
+    const sep = sp.sep || 0.078, y0 = sp.y != null ? sp.y : -0.012;
+    const fc = sp.color != null ? sp.color : 0x1b1719;
+    const tilt = sp.tilt != null ? sp.tilt : 0.2;
+    const g = new THREE.Group();
+    K.head.add(g);
+    // レンズの形（2D）。octa：角の丸い四角 / boston：上が少し平ら
+    const shape2 = (a) => {
+      let x = Math.cos(a), y = Math.sin(a);
+      if (sp.shape === 'octa') {
+        const p = 3.2;
+        x = Math.sign(x) * Math.abs(x) ** (2 / p);
+        y = Math.sign(y) * Math.abs(y) ** (2 / p);
+      } else if (sp.shape === 'boston') {
+        if (y > 0) {
+          x = Math.sign(x) * Math.abs(x) ** 0.82;
+          y *= 0.86;
+        }
+      }
+      return [x * w, y * h];
+    };
+    // 顔の前の、少し曲がった面に置く（外がわほど後ろへ）
+    const place = (sd, x, y, dz = 0) => {
+      const lx = sd * sep + x;
+      const z = R * 0.965 + dz - Math.max(0, sd * x) * Math.sin(tilt) - Math.max(0, -sd * x) * 0.05 - (y * y) * 0.6;
+      return new THREE.Vector3(lx, y0 + y, z);
+    };
+    const N = 44;
+    for (const sd of [-1, 1]) {
+      const pts = [];
+      for (let i = 0; i < N; i++) {
+        const [x, y] = shape2((i / N) * Math.PI * 2);
+        pts.push(place(sd, x * sd, y));
+      }
+      g.add(K.part(tubeGeo(pts, t, true, 64, 6), fc, 0.0035, 'cool', { rim: 0.35, rimColor: 0xffffff }));
+      if (sp.top != null) {
+        // 上ぶち（ブロー）：上の半分を太く
+        const tp = [];
+        for (let i = 0; i <= 20; i++) {
+          const a = 0.12 + (i / 20) * (Math.PI - 0.24);
+          const [x, y] = shape2(a);
+          tp.push(place(sd, x * sd, y + t * 0.4, 0.001));
+        }
+        g.add(K.part(tubeGeo(tp, sp.topT || t * 1.9, false, 40, 6), sp.top, 0.0035, 'cool', { rim: 0.3, rimColor: 0xffffff }));
+      }
+      // レンズ（うすい水色）
+      const lp = [];
+      for (let i = 0; i < N; i++) {
+        const [x, y] = shape2((i / N) * Math.PI * 2);
+        lp.push(new THREE.Vector2(x * 0.98, y * 0.98));
+      }
+      const lg = new THREE.ShapeGeometry(new THREE.Shape(lp), 2);
+      const lv = lg.attributes.position;
+      for (let i = 0; i < lv.count; i++) {
+        const q = place(sd, lv.getX(i) * sd, lv.getY(i), -0.002);
+        lv.setXYZ(i, q.x, q.y, q.z);
+      }
+      if (sd < 0) lg.index.array.reverse();
+      lg.computeVertexNormals();
+      const lens = new THREE.Mesh(lg, new THREE.MeshBasicMaterial({ color: sp.lens != null ? sp.lens : 0xcfeaff, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide }));
+      g.add(lens);
+      // レンズの光（ななめの線）
+      const hl = new THREE.Mesh(new THREE.PlaneGeometry(0.006, h * 0.75), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      hl.position.copy(place(sd, -0.35 * w * sd + (sd > 0 ? 0 : 0), 0.1 * h, 0.003));
+      hl.rotation.set(0, sd * tilt * 0.6, -0.55);
+      g.add(hl);
+      // つる（耳まで）
+      const [ex] = shape2(0);
+      const a0 = place(sd, ex * sd + sd * t, 0.2 * h);
+      const pts2 = [a0, new THREE.Vector3(sd * R * 0.9, y0 + 0.012, R * 0.45), new THREE.Vector3(sd * R * 0.93, y0 + 0.008, R * 0.05), new THREE.Vector3(sd * R * 0.9, y0 - 0.018, -R * 0.2)];
+      g.add(K.part(tubeGeo(pts2, t * (sp.metal ? 0.7 : 0.85), false, 24, 5), sp.temple != null ? sp.temple : fc, 0.003));
+      if (sp.rivet != null) {
+        // 鋲（前の上の外がわ）
+        for (const k of [0.0, 0.035]) {
+          const rv = K.part(new THREE.SphereGeometry(t * 0.55, 8, 6), sp.rivet, 0.002, 'cool', { rim: 0.9, rimColor: 0xffffff });
+          rv.position.copy(place(sd, (w * 0.62 + k * 0.4) * sd, h * 0.62 - k * 0.3, t * 0.9));
+          g.add(rv);
+        }
+      }
+      if (sp.metal || sp.pads) {
+        // 鼻パッド
+        const pd = K.part(new THREE.SphereGeometry(0.0075, 8, 6), sp.pads != null ? sp.pads : 0xd9c08a, 0.002, 'cool', { rim: 0.8, rimColor: 0xffffff });
+        pd.scale.set(0.6, 1.2, 0.6);
+        pd.position.copy(place(sd, -w * 0.82 * sd, -h * 0.25, -0.006));
+        g.add(pd);
+      }
+    }
+    // ブリッジ
+    const bp = [];
+    for (let i = 0; i <= 8; i++) {
+      const u = i / 8;
+      const x = -sep + w * 0.96 + (2 * (sep - w * 0.96)) * u;
+      bp.push(new THREE.Vector3(x, y0 + h * (sp.bridgeY != null ? sp.bridgeY : 0.32) + 0.008 * Math.sin(u * Math.PI), R * 0.985 + 0.004));
+    }
+    g.add(K.part(tubeGeo(bp, t * (sp.metal ? 0.8 : 0.95), false, 16, 5), sp.top != null ? sp.top : fc, 0.003));
+  },
+  // v1.6 ピアス：studR（右耳たぶのスタッド）・cuffR（右耳の上のリング）・studL（左耳たぶ）
+  studR(K) {
+    earStud(K, -1);
+  },
+  studL(K) {
+    earStud(K, 1);
+  },
+  cuffR(K) {
+    const r = K.part(new THREE.TorusGeometry(0.014, 0.0035, 6, 16), 0xe3e7ee, 0.002, 'cool', { rim: 0.9, rimColor: 0xffffff });
+    r.position.set(-HEAD_R * 0.935, 0.008, -0.022);
+    r.rotation.set(0.2, Math.PI / 2, 0.4);
+    K.head.add(r);
+  },
   // ちじわ：風邪のマスク（あごにずらしている）
   mask(K) {
     const R = HEAD_R;
-    const g = new THREE.SphereGeometry(R * 1.04, 22, 8, Math.PI / 2 - 1.12, 2.24, 2.12, 0.62);
+    const up = !!K.look.maskUp; // maskUp：鼻と口をおおう（ドラ）。ふつうはあごにずらしている（前のちじわ）
+    const th0 = up ? 1.86 : 2.12, thL = up ? 0.92 : 0.62;
+    const g = new THREE.SphereGeometry(R * 1.04, 26, up ? 12 : 8, Math.PI / 2 - (up ? 1.2 : 1.12), up ? 2.4 : 2.24, th0, thL);
     const p = g.attributes.position;
     const v = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
@@ -2187,13 +2622,26 @@ const HEAD_ITEMS = {
       }
       return pts;
     };
-    K.head.add(K.part(tubeGeo(edge(2.13, 0.0), 0.0045, false, 40), 0xd2d9df, 0.003));
-    K.head.add(K.part(tubeGeo(edge(2.32, 0.004), 0.003, false, 40), 0xdde3e8, 0.002));
-    K.head.add(K.part(tubeGeo(edge(2.5, 0.004), 0.003, false, 40), 0xdde3e8, 0.002));
-    for (const sd of [-1, 1]) {
-      const a = new THREE.Vector3(sd * R * 0.86, -R * 0.62, R * 0.36);
-      const pts = [a, new THREE.Vector3(sd * R * 0.97, -R * 0.38, R * 0.12), new THREE.Vector3(sd * R * 0.97, -R * 0.08, -R * 0.02), new THREE.Vector3(sd * R * 0.9, R * 0.02, -R * 0.12)];
-      K.head.add(K.part(tubeGeo(pts, 0.0035, false, 16), 0xe8edf0, 0.002));
+    if (up) {
+      // 上のふち（鼻の上）と、横のひだ・耳のひも
+      K.head.add(K.part(tubeGeo(edge(1.87, 0.0), 0.0045, false, 40), 0xd2d9df, 0.003));
+      K.head.add(K.part(tubeGeo(edge(2.12, 0.004), 0.003, false, 40), 0xdde3e8, 0.002));
+      K.head.add(K.part(tubeGeo(edge(2.36, 0.004), 0.003, false, 40), 0xdde3e8, 0.002));
+      for (const sd of [-1, 1]) {
+        const pts = [new THREE.Vector3(sd * R * 0.9, -R * 0.2, R * 0.45), new THREE.Vector3(sd * R * 0.98, -R * 0.12, R * 0.15), new THREE.Vector3(sd * R * 0.98, -R * 0.02, -R * 0.02), new THREE.Vector3(sd * R * 0.9, R * 0.02, -R * 0.12)];
+        K.head.add(K.part(tubeGeo(pts, 0.0035, false, 16), 0xe8edf0, 0.002));
+        const pts2 = [new THREE.Vector3(sd * R * 0.8, -R * 0.72, R * 0.45), new THREE.Vector3(sd * R * 0.95, -R * 0.5, R * 0.12), new THREE.Vector3(sd * R * 0.96, -R * 0.28, -R * 0.04), new THREE.Vector3(sd * R * 0.9, -R * 0.18, -R * 0.12)];
+        K.head.add(K.part(tubeGeo(pts2, 0.0035, false, 16), 0xe8edf0, 0.002));
+      }
+    } else {
+      K.head.add(K.part(tubeGeo(edge(2.13, 0.0), 0.0045, false, 40), 0xd2d9df, 0.003));
+      K.head.add(K.part(tubeGeo(edge(2.32, 0.004), 0.003, false, 40), 0xdde3e8, 0.002));
+      K.head.add(K.part(tubeGeo(edge(2.5, 0.004), 0.003, false, 40), 0xdde3e8, 0.002));
+      for (const sd of [-1, 1]) {
+        const a = new THREE.Vector3(sd * R * 0.86, -R * 0.62, R * 0.36);
+        const pts = [a, new THREE.Vector3(sd * R * 0.97, -R * 0.38, R * 0.12), new THREE.Vector3(sd * R * 0.97, -R * 0.08, -R * 0.02), new THREE.Vector3(sd * R * 0.9, R * 0.02, -R * 0.12)];
+        K.head.add(K.part(tubeGeo(pts, 0.0035, false, 16), 0xe8edf0, 0.002));
+      }
     }
   },
 };
@@ -2224,6 +2672,7 @@ const HAND_ITEMS = {
       l.position.set(x, y, 0.0172);
       g.add(l);
     }
+    if (K.look.phoneHeart === false) return;
     const heart = K.part(new THREE.SphereGeometry(0.012, 8, 6), 0xff8fb8, 0.003);
     heart.scale.set(1, 1, 0.5);
     heart.position.set(0.018, 0.02, 0.0105);
@@ -2286,11 +2735,12 @@ const BODY_ITEMS = {
   // まさし・しょうた：銀のネックレス
   necklace(K) {
     const { look } = K;
-    const r = 0.088 * look.neck * (K.fem ? 0.88 : 1);
-    const n = K.part(new THREE.TorusGeometry(r, 0.0042, 5, 30), 0xdfe3ea, 0.003, 'cool', { rim: 0.9, rimColor: 0xffffff });
-    n.rotation.x = Math.PI / 2 - 0.52;
+    const r = (look.chainR || 0.088) * look.neck * (K.fem ? 0.88 : 1);
+    const n = K.part(new THREE.TorusGeometry(r, look.pendant === false ? 0.0032 : 0.0042, 5, 36), 0xdfe3ea, 0.003, 'cool', { rim: 0.9, rimColor: 0xffffff });
+    n.rotation.x = Math.PI / 2 - (look.chainTilt || 0.52);
     n.position.set(0, 0.276, 0.004);
     K.chest.add(n);
+    if (look.pendant === false) return; // 細いチェーンだけ（てつんど・ナオT）
     const pd = K.part(new THREE.TorusGeometry(0.011, 0.004, 5, 12), 0xdfe3ea, 0.003, 'cool', { rim: 0.9, rimColor: 0xffffff });
     pd.position.set(0, 0.232, 0.7 * bandR(K.prof, 0.43) + 0.022);
     pd.rotation.x = -0.4;
@@ -2356,6 +2806,110 @@ const BODY_ITEMS = {
     holder.rotation.x = Math.PI / 2;
     holder.position.y = 0.11;
     g.add(holder);
+  },
+  // v1.6 ドラ：ネクタイ（紺に白い水玉）と、白いシャツのえり
+  tie(K) {
+    const { look, prof } = K;
+    const c = look.tieColor != null ? look.tieColor : 0x1f2b55;
+    const hw = (y) => 0.075 + 0.11 * smooth(0.44, 0.08, y); // 角度の半分（下ほど広い）
+    const y0 = 0.06, y1 = 0.44;
+    const off = 0.011;
+    const g = bellyBulge(wrapGeo({ levels: levelsFor(prof, y0 - 0.05, y1, 0.02), cols: 8, yr: (u) => [y0 - 0.05 + 0.05 * Math.abs(2 * u - 1), y1], ph: (u, y) => -hw(y) + 2 * hw(y) * u, rf: (y) => bandR(prof, y) + off }), look.belly, -0.02, 0.36);
+    onTorso(K, g, c, 0.005);
+    // 結び目
+    const kn = K.part(new THREE.CylinderGeometry(0.022, 0.014, 0.036, 8), c, 0.004);
+    const kp = torsoPt(K, 0.455, 0, off + 0.006);
+    kn.position.copy(kp);
+    kn.rotation.x = -0.28;
+    K.chest.add(kn);
+    // 白い水玉
+    const dotM = new THREE.MeshBasicMaterial({ color: 0xeef1f6 });
+    const r = rng(3);
+    for (let i = 0; i < 14; i++) {
+      const y = 0.1 + (i / 13) * 0.3;
+      const ph = (r() * 2 - 1) * hw(y) * 0.7;
+      const d = new THREE.Mesh(new THREE.CircleGeometry(0.0052, 8), dotM);
+      const q = torsoPt(K, y, ph, off + 0.0025);
+      d.position.copy(q);
+      d.lookAt(q.clone().add(new THREE.Vector3(Math.sin(ph), 0, Math.cos(ph))));
+      K.chest.add(d);
+    }
+    // シャツのえり（白い三角）
+    const col = look.collarColor != null ? look.collarColor : 0xf6f7f9;
+    for (const sd of [-1, 1]) {
+      const shp = new THREE.Shape();
+      shp.moveTo(0, 0);
+      shp.lineTo(sd * 0.07, 0.006);
+      shp.lineTo(sd * 0.03, -0.07);
+      shp.closePath();
+      const m = K.part(new THREE.ExtrudeGeometry(shp, { depth: 0.007, bevelEnabled: false }), col, 0.006);
+      const q = torsoPt(K, 0.482, 0, 0.012);
+      m.position.set(sd * 0.012, q.y + 0.006, q.z + 0.004);
+      m.rotation.set(-0.55, sd * 0.16, 0);
+      K.chest.add(m);
+    }
+  },
+  // v1.6 はやた：黒いリュック（背中。前に肩ひもと、胸のバックル）
+  backpack(K) {
+    const { look, prof } = K;
+    const bw = look.build;
+    const c = look.packColor != null ? look.packColor : 0x1c1c21;
+    const back = K.part(roundedBox(0.27 * bw, 0.33, 0.13, 0.05, 3), c, 0.01);
+    const bp = torsoPt(K, 0.25, Math.PI, 0.075);
+    back.position.copy(bp);
+    K.chest.add(back);
+    const pk = K.part(roundedBox(0.2 * bw, 0.14, 0.05, 0.03, 2), darker(c, 1.25), 0.008);
+    pk.position.copy(torsoPt(K, 0.16, Math.PI, 0.145));
+    K.chest.add(pk);
+    const top = K.part(new THREE.TorusGeometry(0.03, 0.007, 5, 12, Math.PI), c, 0.004);
+    top.position.copy(torsoPt(K, 0.43, Math.PI, 0.08));
+    K.chest.add(top);
+    for (const sd of [-1, 1]) {
+      // 肩ひも：背中の上 → 肩の上 → 胸の前を下へ → わきへ
+      const pts = [];
+      for (let i = 0; i <= 10; i++) {
+        const u = i / 10;
+        const y = 0.46 - 0.4 * u;
+        const ph = sd * (0.5 + 0.35 * u * u);
+        pts.push(torsoPt(K, y, ph, 0.016));
+      }
+      const top2 = torsoPt(K, 0.5, sd * 0.42, 0.02);
+      const bk = torsoPt(K, 0.4, Math.PI - sd * 0.5, 0.03);
+      K.chest.add(K.part(tubeGeo([bk, top2, ...pts], 0.012, false, 48, 5), c, 0.005));
+    }
+    // 胸のベルトとバックル
+    const yC = 0.34;
+    const bl = [];
+    for (let i = 0; i <= 8; i++) bl.push(torsoPt(K, yC, -0.52 + (1.04 * i) / 8, 0.024));
+    K.chest.add(K.part(tubeGeo(bl, 0.006, false, 24, 4), c, 0.004));
+    const bu = K.part(roundedBox(0.045, 0.024, 0.012, 0.006, 1), 0x2a2a30, 0.004);
+    bu.position.copy(torsoPt(K, yC, 0.05, 0.03));
+    K.chest.add(bu);
+  },
+  // v1.6 しょうた：短パンの白いひも
+  drawstring(K) {
+    const { look } = K;
+    const z = 0.128 * look.build * K.hipW * 0.74 + 0.006;
+    for (const sd of [-1, 1]) {
+      const pts = [new THREE.Vector3(sd * 0.012, 0.05, z), new THREE.Vector3(sd * 0.02, 0.0, z + 0.008), new THREE.Vector3(sd * 0.03 + 0.004, -0.06, z + 0.012)];
+      K.body.add(K.part(tubeGeo(pts, 0.0045, false, 12, 4), 0xf6f6f2, 0.003));
+      const tip = K.part(new THREE.SphereGeometry(0.008, 6, 5), 0xf6f6f2, 0.002);
+      tip.position.copy(pts[2]);
+      K.body.add(tip);
+    }
+  },
+  // v1.6 細いチェーン（首から胸へ、体にそってたれる）。てつんど・ナオT
+  chain(K) {
+    const { look, prof } = K;
+    const yf = look.chainY != null ? look.chainY : 0.385, yb = 0.49;
+    const pts = [];
+    for (let i = 0; i < 48; i++) {
+      const ph = (i / 48) * Math.PI * 2;
+      const f = Math.cos(ph / 2) ** 2; // 前＝1・後ろ＝0
+      const y = yb + (yf - yb) * f ** 1.6;
+      pts.push(torsoPt(K, y, ph, look.chainOff != null ? look.chainOff : 0.009));
+    }
+    K.chest.add(K.part(tubeGeo(pts, 0.003, true, 160, 4), look.chainColor != null ? look.chainColor : 0x9aa1ad, 0.0018, 'cool', { rim: 0.95, rimColor: 0xffffff }));
   },
   // みのり：えりのリボン
   ribbon(K) {
@@ -2765,31 +3319,58 @@ const PRINTS = {
     ctx.lineWidth = 6;
     for (const [x, y, r] of [[212, 52, 18], [184, 26, 11], [226, 96, 10]]) { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.3); ctx.fill(); ctx.stroke(); }
   },
-  // はやた：静岡の富士山（自転車で行った）
+  // はやた：黒いTシャツの大きなプリント（赤いにじんだ文字と、水色と白の波）。写真の雰囲気だけ（絵はオリジナル）
   hayata(ctx) {
-    ctx.fillStyle = '#ff6a3d';
-    ctx.beginPath(); ctx.arc(176, 82, 40, 0, 6.3); ctx.fill();
-    ctx.fillStyle = '#2d6fd6';
-    ctx.strokeStyle = '#1d1418';
-    ctx.lineWidth = 10;
-    ctx.beginPath(); ctx.moveTo(14, 214); ctx.lineTo(98, 74); ctx.lineTo(158, 74); ctx.lineTo(242, 214); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.moveTo(98, 74); ctx.lineTo(158, 74); ctx.lineTo(186, 120); ctx.lineTo(160, 108); ctx.lineTo(140, 126); ctx.lineTo(118, 106); ctx.lineTo(92, 124); ctx.lineTo(72, 118); ctx.closePath(); ctx.fill();
-  },
-  // たかのぶ：激辛（「辛」の字に炎）
-  takanobu(ctx) {
-    ctx.fillStyle = '#ffb21a';
-    ctx.beginPath();
-    for (let i = 0; i <= 12; i++) {
-      const a = (i / 12) * Math.PI * 2 - Math.PI / 2;
-      const r = i % 2 ? 84 : 118;
-      ctx.lineTo(128 + Math.cos(a) * r, 136 + Math.sin(a) * r * 0.95);
+    ctx.save();
+    // 水色と白の波（左下から右上へ）
+    ctx.lineCap = 'round';
+    for (const [c, w, o] of [['#7fd3cf', 30, 0], ['#f4f1ea', 16, 10], ['#3f9c9a', 9, 22]]) {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(26, 238 - o);
+      ctx.bezierCurveTo(70, 160 - o, 30, 120 - o, 96, 84 - o);
+      ctx.bezierCurveTo(150, 54 - o, 120, 150 - o, 178, 150 - o);
+      ctx.stroke();
     }
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#1d1418';
-    ctx.beginPath(); ctx.arc(128, 140, 80, 0, 6.3); ctx.fill();
-    outlined(ctx, '辛', 128, 144, 120, '#ffffff', '#e8331f', 8);
+    // 赤い文字（にじんで、下にたれる）
+    ctx.translate(140, 70);
+    ctx.rotate(-0.08);
+    ctx.font = font(52);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#d8262c';
+    ctx.fillText('HAYATA', 0, 0);
+    const r = rng(29);
+    for (let i = 0; i < 11; i++) {
+      const x = -100 + i * 19 + r() * 6;
+      ctx.fillRect(x, 16, 4.5, 10 + r() * 30);
+      ctx.beginPath();
+      ctx.arc(x + 2.2, 26 + r() * 36, 3.6, 0, 6.3);
+      ctx.fill();
+    }
+    ctx.restore();
+  },
+  // なお：写真のスポーツTシャツの、青いななめの太字（名前の「NAO」にした）と、明るい青の切りこみ
+  takanobu(ctx) {
+    ctx.save();
+    ctx.translate(128, 132);
+    ctx.transform(1, 0, -0.26, 1, 0, 0);
+    ctx.font = font(104);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#2350c8';
+    ctx.fillText('NAO', 0, 0);
+    ctx.restore();
+    // ななめの切りこみ（明るい青）
+    ctx.save();
+    ctx.translate(128, 132);
+    ctx.rotate(-0.32);
+    ctx.fillStyle = '#e1e5e4';
+    ctx.fillRect(-150, -6, 300, 9);
+    ctx.fillStyle = '#5aa9ff';
+    ctx.fillRect(-150, 6, 300, 7);
+    ctx.restore();
   },
   // こうた：盾の校章に、かみなり（短気）
   kouta(ctx) {
@@ -2821,15 +3402,34 @@ const PRINTS = {
   kousei(ctx) {
     outlined(ctx, '5', 128, 136, 236, '#e8331f', '#ffffff', 22);
   },
-  // しょうた：キラキラ（ビジュアル担当）
+  // しょうた：上半身はだか（写真のまま）。胸と腹筋のうすい線・おへそ
   shouta(ctx) {
-    ctx.fillStyle = '#ffffff';
-    star(ctx, 112, 136, 92, 4);
-    ctx.fillStyle = '#38d16a';
-    star(ctx, 112, 136, 34, 4);
-    ctx.fillStyle = '#ffffff';
-    star(ctx, 206, 56, 34, 4);
-    star(ctx, 206, 206, 22, 4);
+    ctx.strokeStyle = 'rgba(150,80,60,0.32)';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    for (const sd of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(128 + sd * 12, 64);
+      ctx.quadraticCurveTo(128 + sd * 52, 82, 128 + sd * 86, 52);
+      ctx.stroke();
+    }
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(128, 76);
+    ctx.lineTo(128, 196);
+    ctx.stroke();
+    for (const y of [118, 152]) {
+      for (const sd of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(128 + sd * 8, y);
+        ctx.quadraticCurveTo(128 + sd * 22, y + 4, 128 + sd * 34, y - 2);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = 'rgba(140,70,55,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(128, 214, 4, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
   },
   // ちじわ：体温計（風邪）
   chijiwa(ctx) {
@@ -2850,15 +3450,24 @@ const PRINTS = {
     ctx.fillStyle = 'rgba(150,215,255,0.95)';
     ctx.beginPath(); ctx.moveTo(200, 150); ctx.quadraticCurveTo(222, 186, 200, 200); ctx.quadraticCurveTo(178, 186, 200, 150); ctx.fill();
   },
-  // ナオT：大きな「T」（ナオTの T は Tシャツの T）
+  // ナオT：胸の小さな白い文字（写真のTシャツのワンポイント）。T は Tシャツの T
   naot(ctx) {
-    ctx.fillStyle = '#ff5a2a';
-    ctx.strokeStyle = '#7a1d10';
-    ctx.lineWidth = 10;
+    ctx.save();
+    ctx.translate(128, 128);
+    ctx.rotate(-0.12);
+    ctx.font = 'italic 700 150px Georgia, "Times New Roman", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f2f1ee';
+    ctx.fillText('T', 6, -4);
+    ctx.strokeStyle = '#f2f1ee';
+    ctx.lineWidth = 9;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(26, 22); ctx.lineTo(230, 22); ctx.lineTo(230, 82); ctx.lineTo(160, 82); ctx.lineTo(160, 238); ctx.lineTo(96, 238); ctx.lineTo(96, 82); ctx.lineTo(26, 82);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+    ctx.moveTo(-74, 58);
+    ctx.bezierCurveTo(-20, 86, 40, 40, 88, 66);
+    ctx.stroke();
+    ctx.restore();
   },
   // トリキ：白い小鳥のワッペン
   toriki(ctx) {
@@ -2933,14 +3542,14 @@ const PRINTS = {
 Object.assign(PRINT_AT, {
   tetsundo: { y: 0.11, size: 1.2 },
   koudai: { y: 0.1, size: 0.82 },
-  hayata: { x: 0.08, y: 0.16, size: 0.62 },
-  takanobu: { y: 0.04, size: 1.1 },
+  hayata: { x: -0.01, y: 0.12, size: 1.6 },
+  takanobu: { y: 0.17, size: 1.45 },
   kouta: { x: 0.085, y: 0.13, size: 0.5 },
   masashi: { y: 0.1, size: 1.05 },
   kousei: { y: 0.03, size: 1.05, back: true, backY: 0.12 },
-  shouta: { y: 0.1, size: 0.78 },
+  shouta: { y: 0.13, size: 1.95 },
   chijiwa: { y: 0.11, size: 0.82 },
-  naot: { y: 0.08, size: 1.75 },
+  naot: { x: 0.08, y: 0.22, size: 0.55 },
   toriki: { x: 0.085, y: 0.2, size: 0.55 },
   minori: { y: 0.1, size: 0.62 },
   mana: { y: 0.1, size: 0.95 },
@@ -3059,6 +3668,93 @@ function capGeo(HP, o = {}) {
   capG.computeVertexNormals();
   return capG;
 }
+// 毛すじの絵（髪の殻に貼る）。たての線＝球の経線なので、てっぺんから すそへ流れる
+const hairTexCache = new Map();
+function hairTex(color, kind = 'down') {
+  const key = color + '|' + kind;
+  if (hairTexCache.has(key)) return hairTexCache.get(key);
+  const t = canvasTex(512, 256, (ctx) => {
+    const c = new THREE.Color(color);
+    const hex = (k, l = 0) => '#' + c.clone().multiplyScalar(k).lerp(new THREE.Color(0xffffff), l).getHexString();
+    ctx.fillStyle = hex(1);
+    ctx.fillRect(0, 0, 512, 256);
+    const r = rng(kind === 'down' ? 61 : 67);
+    const dark = c.getHSL({}).l < 0.2;
+    if (kind === 'slant') {
+      // 分け目から横へなでつけた髪（ななめのくしの目）
+      const n = 22;
+      for (let i = 0; i < n; i++) {
+        const x = (i / n) * 512 + (r() - 0.5) * 4;
+        for (const [col, a, wdt, dx] of [[hex(0.55), 0.6, 3, 0], [hex(1, 0.28), 0.42, 2, 6]]) {
+          ctx.strokeStyle = col;
+          ctx.globalAlpha = a;
+          ctx.lineWidth = wdt;
+          for (const o of [-512, 0, 512]) {
+            ctx.beginPath();
+            ctx.moveTo(x + dx + o, 0);
+            ctx.bezierCurveTo(x + dx + o + 40, 90, x + dx + o + 90, 170, x + dx + o + 150, 256);
+            ctx.stroke();
+          }
+        }
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+    if (kind === 'comb') {
+      // オールバック：くしの目（等間かくの暗いみぞと、つやの線）
+      const n = 24;
+      for (let i = 0; i < n; i++) {
+        const x = (i / n) * 512 + (r() - 0.5) * 4;
+        ctx.strokeStyle = hex(0.55);
+        ctx.globalAlpha = 0.62;
+        ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.bezierCurveTo(x + 4, 90, x - 4, 170, x + 2, 256);
+        ctx.stroke();
+        ctx.strokeStyle = hex(1, 0.28);
+        ctx.globalAlpha = 0.42;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x + 5, 0);
+        ctx.bezierCurveTo(x + 9, 90, x + 1, 170, x + 7, 256);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
+    // 毛束のかたまり（太い明暗）
+    for (let i = 0; i < 40; i++) {
+      const x = r() * 512, w = 6 + r() * 16;
+      ctx.fillStyle = r() < 0.5 ? hex(0.72) : dark ? hex(1, 0.1) : hex(1.12);
+      ctx.globalAlpha = 0.38;
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.15, 0);
+      ctx.quadraticCurveTo(x + (r() - 0.5) * 20, 128, x - w * 0.5, 256);
+      ctx.lineTo(x + w * 0.5, 256);
+      ctx.quadraticCurveTo(x + (r() - 0.5) * 20 + w * 0.3, 128, x + w * 0.15, 0);
+      ctx.fill();
+    }
+    // 細い毛すじ
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 110; i++) {
+      const x = r() * 512;
+      const light = r() < 0.45;
+      ctx.strokeStyle = light ? (dark ? hex(1, 0.2) : hex(1.25, 0.08)) : hex(0.6);
+      ctx.globalAlpha = light ? 0.32 : 0.55;
+      ctx.lineWidth = 0.8 + r() * 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.bezierCurveTo(x + (r() - 0.5) * 14, 80, x + (r() - 0.5) * 18, 170, x + (r() - 0.5) * 10, 256);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  });
+  t.wrapS = THREE.RepeatWrapping;
+  t.userData.shared = true;
+  hairTexCache.set(key, t);
+  return t;
+}
 // 髪を作る道具：頭の表面の場所（az：0＝前・＋＝キャラの左 / el：0＝目の高さ・＋＝上）から毛束を生やす
 function hairKit(hair, look, mat, line, K) {
   const R = HEAD_R, HP = K ? K.HP : null;
@@ -3099,7 +3795,13 @@ function hairKit(hair, look, mat, line, K) {
     hair.add(m);
     return m;
   };
-  return { R, HP, add, surf, strand, pivot, shine };
+  // 毛すじの絵を貼った髪（殻に使う）。kind：'down'（上から下へ）/ 'back'（前から後ろへ）
+  const addTex = (geo, w = 0.012, kind = 'down') => {
+    const m = mesh(geo, K ? texCel({ char: true, shade: 'hair', rim: 0.6, rimColor: K.rimHex, map: hairTex(look.hair, kind) }) : mat, line, w);
+    hair.add(m);
+    return m;
+  };
+  return { R, HP, add, addTex, surf, strand, pivot, shine };
 }
 // 前髪の列（az を a0〜a1 に n 本）
 function fringe(H, n, a0, a1, el, len, rad, o = {}) {
@@ -3122,7 +3824,7 @@ const HAIR_STYLES = {
     for (const az of [2.75, -2.75, Math.PI]) H.strand(az, 0.55, 0.12, 0.062, { pitch: 0.16, bend: 0.45, flat: 0.45 });
     H.shine(1.085, 0.6);
   },
-  // たかのぶ：ごく短い坊主（はちまきの上に、短い毛）
+  // ごく短い坊主（はちまきの上に、短い毛）。v1.5 のなお（いまは使っていない）
   buzz(hair, look, mat, line, K) {
     const H = hairKit(hair, look, mat, line, K);
     H.add(capGeo(H.HP, { front: 0.32, rad: 1.045, side: -0.36, nape: -0.7 }), 0.012);
@@ -3257,8 +3959,12 @@ const HAIR_STYLES = {
   // みのり：まっすぐのロングヘア（前髪・顔のよこの髪・背中まで）
   long(hair, look, mat, line, K) {
     const H = hairKit(hair, look, mat, line, K);
-    H.add(capGeo(H.HP, { front: 0.34, side: -0.55, nape: -0.95, vol: 0.06 }), 0.012);
-    fringe(H, 7, -0.62, 0.62, 0.76, (t, i) => 0.158 + (i % 2) * 0.012, 0.05, { pitch: 0.18, bend: 0.6, flat: 0.34, yaw: (t) => (t - 0.5) * 0.3 });
+    H.add(capGeo(H.HP, { front: look.sheer ? 0.42 : 0.34, side: -0.55, nape: -0.95, vol: 0.06 }), 0.012);
+    if (look.sheer) {
+      // シースルーの前髪（細い束を、すきまをあけて。まん中は少し分ける）
+      fringe(H, 9, -0.6, 0.6, 0.86, (t, i) => 0.16 + (i % 2) * 0.014 - Math.abs(t - 0.5) * 0.02, 0.026, { pitch: 0.16, bend: 0.55, flat: 0.4, yaw: (t) => (t - 0.5) * 0.55 });
+      for (const sd of [-1, 1]) H.strand(sd * 0.72, 0.72, 0.21, 0.034, { pitch: 0.1, yaw: -sd * 0.15, bend: 0.35, flat: 0.4 });
+    } else fringe(H, 7, -0.62, 0.62, 0.76, (t, i) => 0.158 + (i % 2) * 0.012, 0.05, { pitch: 0.18, bend: 0.6, flat: 0.34, yaw: (t) => (t - 0.5) * 0.3 });
     fringe(H, 5, -0.75, 0.75, 1.1, 0.17, 0.068, { pitch: 0.22, bend: 0.5, flat: 0.38, yaw: (t) => (t - 0.5) * 0.4 });
     for (const sd of [-1, 1]) {
       H.strand(sd * 1.0, 0.44, 0.34, 0.054, { pitch: 0.1, yaw: -sd * 0.12, bend: 0.12, flat: 0.4 });
@@ -3359,6 +4065,400 @@ const HAIR_STYLES = {
     H.shine(1.075, 0.62);
   },
 };
+// ===== 写真から作り直した髪（v1.6）=====
+// 値か関数（az をわたす）を読む
+const azv = (x, az) => (typeof x === 'function' ? x(az) : x || 0);
+// すその線：前（|az|<a1）→ 横（a2）→ 後ろ（a3〜）を、なめらかにつなぐ（R の何倍）
+function hemLine(front, side, back, a1 = 0.7, a2 = 1.6, a3 = 2.5) {
+  return (az) => {
+    const a = Math.abs(az);
+    if (a < a1) return front;
+    if (a < a2) return front + (side - front) * smooth(a1, a2, a);
+    if (a < a3) return side + (back - side) * smooth(a2, a3, a);
+    return back;
+  };
+}
+// 髪のかたまり（頭をおおう殻）。マッシュ・ボブのように、すそを切りそろえた形
+//  hem(az)：すその高さ / rad：大きさ / puff(az, yy)：ふくらみ（yy＝y/R）/ flare：すそを外へ / tuck：すそのふちを内へ（前髪を顔にそわせる）
+//  band：flare がきく幅（R の何倍）/ clumps：{ n 毛束の数（1周）, tip 毛先のとがり, amp ふくらみ, top どこから（yy）, a 毛束を入れる範囲（|az|＜a） }
+function shellK(o, az, y, hem) {
+  const R = HEAD_R;
+  let k = 1 + (o.puff ? o.puff(az, y / R) : 0);
+  k += azv(o.flare, az) * smooth(hem + R * (o.band || 0.4), hem, y);
+  k -= azv(o.tuck, az) * smooth(hem + R * (o.tuckBand || 0.12), hem, y);
+  const c = o.clumps;
+  if (c && Math.abs(az) < (c.a || 9)) {
+    const s = Math.abs(Math.sin((az * c.n) / 2 + (c.ph || 0)));
+    k += (c.amp || 0) * (1 - s * 2) * smooth(R * (c.top != null ? c.top : 0.6), hem, y);
+  }
+  if (o.part != null && y > R * 0.25) {
+    // 分け目のくぼみ
+    const d = Math.abs(az - o.part);
+    if (d < 0.12) k -= 0.03 * (1 - d / 0.12) * smooth(R * 0.25, R * 0.6, y);
+  }
+  return k;
+}
+function shellHem(o, az) {
+  let hem = o.hem(az);
+  const c = o.clumps;
+  if (c && Math.abs(az) < (c.a || 9)) hem -= (c.tip || 0) * (1 - Math.abs(Math.sin((az * c.n) / 2 + (c.ph || 0))));
+  return hem * HEAD_R;
+}
+function shellGeo(HP, o) {
+  const R = HEAD_R;
+  const rad = o.rad || 1.12;
+  const g = new THREE.SphereGeometry(R * rad, o.ws || 60, o.hs || 30, -Math.PI / 2, Math.PI * 2, 0, Math.PI * (o.theta || 0.96)); // つなぎ目は後ろ
+  const p = g.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    headShape(v, R, HP);
+    const az = Math.atan2(v.x, v.z);
+    const hem = shellHem(o, az);
+    if (v.y < hem) v.y = hem;
+    const k = shellK(o, az, v.y, hem);
+    v.x *= k;
+    v.z *= k;
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+// 殻の表面の点（az・高さ yy で。殻と同じ計算）。毛先や毛束をすそにそって置くときに使う
+function shellPt(HP, o, az, yy, out = 0) {
+  const R = HEAD_R;
+  const rad = o.rad || 1.12;
+  // 球の上で、高さ yy になる点をさがす（headShape で少し動くので、何回かなおす）
+  let th = Math.acos(clamp(yy / (rad * 1.04), -1, 1));
+  const v = new THREE.Vector3();
+  for (let it = 0; it < 5; it++) {
+    v.set(Math.sin(th) * Math.sin(az), Math.cos(th), Math.sin(th) * Math.cos(az)).multiplyScalar(R * rad);
+    headShape(v, R, HP);
+    th = clamp(th + (v.y / R - yy) * 0.6, 0.02, Math.PI - 0.02);
+  }
+  const hem = shellHem(o, az);
+  if (v.y < hem) v.y = hem;
+  const k = shellK(o, az, v.y, hem) + out;
+  v.x *= k;
+  v.z *= k;
+  return v;
+}
+// 殻のすそにそって、毛先（下向きの短い束）を並べる。a0〜a1 に n 本
+function hemTips(H, o, n, a0, a1, len, rad, opt = {}) {
+  const r = rng(opt.seed || 5);
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const az = a0 + (a1 - a0) * t + (opt.jit || 0) * (r() - 0.5);
+    const hem = shellHem(o, az) / HEAD_R;
+    const p = shellPt(H.HP, o, az, hem + (opt.up != null ? opt.up : 0.06), opt.out != null ? opt.out : -0.01);
+    const L = (typeof len === 'function' ? len(t, i, az) : len) * (1 + (opt.lenJit || 0) * (r() - 0.5));
+    const m = H.add(strandGeo(L, typeof rad === 'function' ? rad(t, i, az) : rad, opt.bend != null ? opt.bend : 0.25, opt.flat != null ? opt.flat : 0.5, opt.twist || 0), opt.w || 0.008);
+    // 下向き（少し外へ・横へ）
+    const out = new THREE.Vector3(Math.sin(az), 0, Math.cos(az));
+    const side = new THREE.Vector3(Math.cos(az), 0, -Math.sin(az));
+    const yaw = typeof opt.yaw === 'function' ? opt.yaw(t, i, az) : opt.yaw || 0;
+    const D = new THREE.Vector3(0, -1, 0).addScaledVector(out, opt.pitch != null ? opt.pitch : 0.12).addScaledVector(side, yaw);
+    aimMesh(m, D, out.clone().negate());
+    m.position.copy(p);
+  }
+}
+// 殻の上に毛束を重ねる（表面にそって下へ。yaw で横へ、lift で表面から起こす）。毛束はふちどりがつくので、髪の流れが見える
+function clumpOn(H, o, az, yy, len, rad, opt = {}) {
+  const p0 = shellPt(H.HP, o, az, yy, opt.out != null ? opt.out : 0.01);
+  const p1 = shellPt(H.HP, o, az, yy - 0.06, opt.out != null ? opt.out : 0.01);
+  const q1 = shellPt(H.HP, o, az + 0.06, yy, opt.out != null ? opt.out : 0.01);
+  const down = p1.clone().sub(p0);
+  if (down.lengthSq() < 1e-9) down.set(0, -1, 0); // すそより下にさしたとき（平らな所）は、まっすぐ下へ
+  down.normalize();
+  const side = q1.clone().sub(p0).normalize();
+  const nrm = new THREE.Vector3().crossVectors(side, down).normalize();
+  if (nrm.dot(p0) < 0) nrm.negate();
+  const yaw = opt.yaw || 0, lift = opt.lift || 0;
+  const D = down.clone().multiplyScalar(Math.cos(yaw)).addScaledVector(side, Math.sin(yaw)).multiplyScalar(Math.cos(lift)).addScaledVector(nrm, Math.sin(lift));
+  const m = H.add(strandGeo(len, rad, opt.bend != null ? opt.bend : 0.35, opt.flat != null ? opt.flat : 0.34, opt.twist || 0), opt.w || 0.008);
+  aimMesh(m, D, nrm.clone().negate());
+  m.position.copy(p0);
+  return m;
+}
+Object.assign(HAIR_STYLES, {
+  // みのり：まっすぐのロングヘア（金色）。シースルーの前髪はまつげまで、顔のよこに落ちる髪、背中まで（毛束をすきまなく重ねる）
+  straightLong(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.08,
+      hem: hemLine(0.44, -0.1, -0.5, 0.66, 1.5, 2.4),
+      puff: (az, yy) => 0.03 * Math.exp(-(((yy - 0.55) / 0.45) ** 2)),
+      tuck: (az) => 0.02 + 0.07 * Math.max(0, Math.cos(az)) ** 2,
+      tuckBand: 0.3,
+      clumps: { n: 50, tip: 0.36, amp: 0.004, top: 0.6, a: 0.72 },
+      part: 0,
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    const r = rng(83);
+    // シースルーの前髪（細い束を、すきまをあけて）
+    for (let i = 0; i < 7; i++) {
+      const t = i / 6;
+      const az = -0.55 + 1.1 * t;
+      clumpOn(H, o, az, 0.78, 0.15 + 0.01 * Math.sin(i * 1.7), 0.022, { yaw: (t - 0.5) * 0.4, lift: 0.05, bend: 0.3, flat: 0.45, out: 0.004 });
+    }
+    // 顔のよこの髪（あごの下まで、まっすぐ下へ）
+    for (const sd of [-1, 1]) {
+      clumpOn(H, o, sd * 0.74, 0.52, 0.32, 0.044, { yaw: -sd * 0.04, lift: 0.0, bend: 0.06, flat: 0.3 });
+      clumpOn(H, o, sd * 0.95, 0.6, 0.36, 0.052, { yaw: -sd * 0.02, lift: 0.0, bend: 0.05, flat: 0.28 });
+      for (const az of [1.25, 1.6, 1.95, 2.3, 2.65]) clumpOn(H, o, sd * az, 0.55, 0.26, 0.068, { lift: 0.0, bend: 0.06, flat: 0.28, twist: (r() - 0.5) * 0.2 });
+    }
+    clumpOn(H, o, Math.PI, 0.55, 0.26, 0.072, { lift: 0.0, bend: 0.06, flat: 0.28 });
+    // 背中の髪（ゆれる）：すきまなく重ねて、まっすぐ下へ（鎖骨の下まで）
+    const pv = H.pivot(0, -0.1, -0.15);
+    for (let i = 0; i < 13; i++) {
+      const az = Math.PI - 1.5 + (3.0 * i) / 12;
+      const d = new THREE.Vector3(Math.sin(az) * 0.04, -1, Math.cos(az) * 0.04 - 0.16);
+      H.strand(az, -0.12, 0.52 - Math.abs(i - 6) * 0.01, 0.076, { dir: [d.x, d.y, d.z], curl: [-Math.sin(az), 0.2, -Math.cos(az)], bend: 0.04, flat: 0.26, parent: pv, rr: 1.02 });
+    }
+    H.shine(1.09, 0.6, 1.0);
+  },
+  // ドラ：大きく丸いマッシュ（前髪は上まつげの上でまっすぐ。横は耳をかくして外へふくらみ、後ろはえりあしまで）
+  mushroom(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.17,
+      hem: hemLine(0.07, -0.46, -0.78, 0.74, 1.62, 2.5),
+      puff: (az, yy) => 0.13 * Math.sin(az) ** 2 * Math.exp(-(((yy + 0.05) / 0.6) ** 2)) + 0.03 * Math.cos(az) ** 2 * Math.exp(-(((yy - 0.3) / 0.4) ** 2)) - 0.05 * Math.max(0, yy - 0.6),
+      flare: (az) => 0.03 + 0.05 * Math.sin(az) ** 2,
+      tuck: (az) => 0.1 * Math.max(0, Math.cos(az)) ** 2 + 0.04 * Math.max(0, -Math.cos(az)),
+      band: 0.4,
+      tuckBand: 0.14,
+      clumps: { n: 44, tip: 0.04, amp: 0.014, top: 0.75 },
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    hemTips(H, o, 13, -0.8, 0.8, (t) => 0.016 + 0.006 * Math.sin(t * 17), 0.014, { pitch: -0.02, bend: 0.1, up: 0.03, out: -0.012, jit: 0.04, seed: 11, w: 0.005 });
+    H.shine(1.18, 0.66, 1.08);
+  },
+  // ちじわ：まっすぐ目のボブ（あたたかい黒茶色）。前髪はメガネの上まで。耳の前の髪は口の高さまで、後ろはえりあし
+  mash(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.12,
+      hem: (az) => {
+        const a = Math.abs(az);
+        if (a < 0.72) return 0.24;
+        if (a < 1.3) return 0.24 + (-0.58 - 0.24) * smooth(0.72, 1.3, a); // 耳の前で、口の高さまで
+        if (a < 1.75) return -0.58 + (-0.36 + 0.58) * smooth(1.3, 1.75, a); // 耳の上は少し短く
+        return -0.36 + (-0.72 + 0.36) * smooth(1.75, 2.5, a);
+      },
+      puff: (az, yy) => 0.04 * Math.sin(az) ** 2 * Math.exp(-(((yy + 0.1) / 0.6) ** 2)) - 0.05 * Math.max(0, yy - 0.5),
+      flare: 0.0,
+      tuck: (az) => 0.05 + 0.04 * Math.max(0, Math.cos(az)),
+      band: 0.3,
+      tuckBand: 0.18,
+      clumps: { n: 36, tip: 0.06, amp: 0.016, top: 0.7 },
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    hemTips(H, o, 11, -0.72, 0.72, (t) => 0.026 + 0.01 * Math.sin(t * 13), 0.02, { pitch: -0.03, bend: 0.2, up: 0.04, out: -0.02, jit: 0.05, seed: 7, w: 0.006 });
+    // 顔のよこにまっすぐ落ちる髪
+    for (const sd of [-1, 1]) for (const az of [0.95, 1.15]) clumpOn(H, o, sd * az, 0.2, 0.12, 0.05, { yaw: -sd * 0.05, lift: 0.0, bend: 0.12, flat: 0.34 });
+    H.shine(1.13, 0.64, 1.03);
+  },
+  // はやた：やわらかく丸い、ゆるくうねるマッシュ（前髪はメガネの上の1/3にかかる。横はあごまで）
+  shaggy(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.15,
+      hem: (az) => {
+        const a = Math.abs(az);
+        if (a < 0.72) return 0.48;
+        if (a < 1.35) return 0.48 + (-0.62 - 0.48) * smooth(0.72, 1.35, a); // 横はあごまで
+        return -0.62 + (-0.8 + 0.62) * smooth(1.35, 2.5, a);
+      },
+      puff: (az, yy) => 0.09 * Math.exp(-(((yy - 0.55) / 0.5) ** 2)) + 0.05 * Math.sin(az) ** 2 * Math.exp(-(((yy + 0.1) / 0.5) ** 2)),
+      flare: (az) => 0.02 * Math.sin(az) ** 2,
+      tuck: (az) => 0.02 + 0.03 * Math.sin(az) ** 2,
+      band: 0.32,
+      clumps: { n: 28, tip: 0.06, amp: 0.026, top: 0.8, ph: 0.4 },
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    const r = rng(19);
+    // 前髪：やわらかい重い束がメガネの上のほうまで（ゆるくうねる）
+    for (let i = 0; i < 9; i++) {
+      const az = -0.82 + (1.64 * i) / 8 + (r() - 0.5) * 0.05;
+      clumpOn(H, o, az, 0.92, 0.19 + (i % 2) * 0.015 + r() * 0.012, 0.064, { yaw: (r() - 0.5) * 0.5, lift: 0.06, bend: 0.5, flat: 0.36, twist: (r() - 0.5) * 1.1 });
+    }
+    // 上：丸くふくらんだ束
+    for (let i = 0; i < 11; i++) {
+      const az = -2.4 + (4.8 * i) / 10 + (r() - 0.5) * 0.2;
+      clumpOn(H, o, az, 1.0 + r() * 0.15, 0.12 + r() * 0.03, 0.07, { yaw: (r() - 0.5) * 0.8, lift: 0.04 + r() * 0.06, bend: 0.65, flat: 0.4, twist: (r() - 0.5) * 0.8 });
+    }
+    // 横と後ろ：あごまでのやわらかい束（内へまるく）
+    for (const sd of [-1, 1])
+      for (const [az, yy, len] of [[1.0, 0.35, 0.2], [1.3, 0.25, 0.19], [1.7, 0.15, 0.17], [2.2, 0.0, 0.16], [2.7, -0.15, 0.15]])
+        clumpOn(H, o, sd * az, yy, len, 0.07, { yaw: -sd * 0.05, lift: 0.02, bend: 0.4, flat: 0.44, twist: sd * 0.4 });
+    H.shine(1.17, 0.6, 1.02);
+  },
+  // しょうた：無造作で毛量の多いマッシュウルフ（顔の1.5倍くらいのはば。ぬれたような太い束。前髪はまゆまで）
+  textured(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.18,
+      hem: hemLine(0.46, -0.12, -0.6, 0.7, 1.55, 2.5),
+      puff: (az, yy) => 0.11 * Math.exp(-(((yy - 0.6) / 0.45) ** 2)) + 0.07 * Math.sin(az) ** 2 * Math.exp(-(((yy - 0.15) / 0.45) ** 2)),
+      flare: (az) => 0.03 * Math.sin(az) ** 2,
+      tuck: 0.02,
+      clumps: { n: 22, tip: 0.12, amp: 0.045, top: 0.85, ph: 0.2 },
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    const r = rng(31);
+    // 前髪：太いとがった束がまゆまで（長さと向きをばらばらに）
+    for (let i = 0; i < 8; i++) {
+      const az = -0.8 + (1.6 * i) / 7 + (r() - 0.5) * 0.06;
+      clumpOn(H, o, az, 0.86, 0.15 + (i % 3) * 0.018 + r() * 0.02, 0.064, { yaw: (r() - 0.5) * 0.6, lift: 0.1, bend: 0.3, flat: 0.36, twist: (r() - 0.5) * 0.8 });
+    }
+    // 上：ふわっと立った太い束
+    for (let i = 0; i < 11; i++) {
+      const az = -2.3 + (4.6 * i) / 10 + (r() - 0.5) * 0.2;
+      clumpOn(H, o, az, 0.98 + r() * 0.2, 0.11 + r() * 0.04, 0.068, { yaw: (r() - 0.5) * 2.4, lift: 0.3 + r() * 0.35, bend: 0.55, flat: 0.4, twist: (r() - 0.5) * 1.2 });
+    }
+    // 横と後ろ：太い束が耳の上にかぶさって、毛先は少し外へ
+    for (const sd of [-1, 1])
+      for (const [az, yy, len] of [[1.1, 0.4, 0.14], [1.45, 0.3, 0.14], [1.85, 0.2, 0.14], [2.3, 0.05, 0.14], [2.75, -0.1, 0.14]])
+        clumpOn(H, o, sd * az, yy, len, 0.066, { yaw: -sd * 0.08, lift: 0.03, bend: 0.22, flat: 0.42, twist: sd * 0.3 });
+    H.shine(1.2, 0.62, 1.03);
+  },
+  // てつんど：横は短く耳を出す。おでこを出して、前髪を上へかき上げ、キャラの右（写真の左）・後ろへ流す
+  sweep(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    H.addTex(capGeo(H.HP, { front: 0.52, side: 0.14, nape: -0.62, rad: 1.06, vol: 0.16 }), 0.012);
+    // 前の毛束：はえぎわから立ち上げて、上と後ろへ（少し右へ）
+    for (let i = 0; i < 7; i++) {
+      const az = 0.6 - i * 0.18;
+      H.strand(az, 0.66 + 0.05 * Math.cos(az * 2), 0.17 - Math.abs(az) * 0.03, 0.068, { pitch: 0.8, yaw: -(Math.PI - 0.55), bend: 0.75, flat: 0.36, rr: 1.05 });
+    }
+    // 右のこめかみに少し落ちる毛
+    H.strand(-0.95, 0.55, 0.09, 0.04, { pitch: 0.2, yaw: -0.4, bend: 0.5, flat: 0.4, rr: 1.07 });
+    // 上と後ろ（後ろへ流す）
+    for (const [az, el] of [[0.35, 1.12], [-0.25, 1.2], [0.95, 1.0], [-0.95, 1.0], [1.8, 0.86], [-1.8, 0.86], [2.5, 0.72], [-2.5, 0.72], [Math.PI, 0.82]]) H.strand(az, el, 0.13, 0.065, { pitch: 0.22, yaw: Math.PI - az * 0.3, bend: 0.5, flat: 0.38, rr: 1.07 });
+    // 横の短い毛（耳の上）
+    for (const sd of [-1, 1]) for (const az of [1.3, 1.75, 2.2]) H.strand(sd * az, 0.4, 0.055, 0.045, { pitch: 0.15, bend: 0.3, flat: 0.45, rr: 1.05 });
+    H.shine(1.1, 0.6);
+  },
+  // エブン：ふわっとした中くらいの髪。キャラの左で分けて、前髪を右（写真の左）のこめかみへ流す。耳はかくれる
+  sideBang(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.1,
+      hem: (az) => {
+        const base = hemLine(0.1, -0.4, -0.62, 0.8, 1.6, 2.5)(az);
+        const f = 0.36 - 0.24 * smooth(0.7, -0.6, az); // 分け目（キャラの左）は高く、右へいくほど低い
+        return f + (base - f) * smooth(0.62, 0.95, Math.abs(az));
+      },
+      puff: (az, yy) => 0.05 * Math.exp(-(((yy - 0.6) / 0.45) ** 2)) + 0.045 * Math.sin(az) ** 2 * Math.exp(-(((yy + 0.05) / 0.45) ** 2)),
+      flare: (az) => 0.02 + 0.03 * Math.sin(az) ** 2,
+      tuck: 0.02,
+      band: 0.3,
+      clumps: { n: 32, tip: 0.05, amp: 0.02, top: 0.75 },
+      part: 0.5,
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    const r = rng(71);
+    // 前髪：分け目から、写真の左（キャラの右）へななめに流れる、やわらかい束
+    for (let i = 0; i < 7; i++) {
+      const az = 0.42 - i * 0.17;
+      clumpOn(H, o, az, 0.92 - i * 0.03, 0.17 + i * 0.012, 0.06, { yaw: -(0.95 - i * 0.05), lift: 0.06, bend: 0.32, flat: 0.34, twist: -0.3 });
+    }
+    clumpOn(H, o, 0.72, 0.85, 0.12, 0.052, { yaw: 0.5, lift: 0.07, bend: 0.3 });
+    // 横と後ろの、やわらかい束（耳にかぶさる）
+    for (let i = 0; i < 11; i++) {
+      const az = 0.95 + (i / 10) * (Math.PI * 2 - 1.9) + (r() - 0.5) * 0.12;
+      clumpOn(H, o, az, 0.5 + r() * 0.2, 0.15 + r() * 0.04, 0.062, { yaw: (r() - 0.5) * 0.3, lift: 0.04, bend: 0.3, flat: 0.38, twist: (r() - 0.5) * 0.5 });
+    }
+    // 頭の上：寝かせた束（v1.7：立った束がゴーグルのように見えたので、平らに）
+    for (let i = 0; i < 5; i++) {
+      const y = r() - 0.5;
+      clumpOn(H, o, -1.2 + i * 0.6, 1.08, 0.1, 0.05, { yaw: y * 0.6, lift: 0.025, bend: 0.22, flat: 0.42 });
+    }
+    H.shine(1.11, 0.62, 1.02);
+  },
+  // なお：短いスポーツ刈り（上は平らで短く、前髪はまゆの少し上。横はすっきりで耳が出る）
+  crop(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.045,
+      hem: (az) => {
+        const a = Math.abs(az);
+        // 前髪はまゆの少し上（まん中）、こめかみは少し上がる → 横は耳の上 → 後ろはえりあし
+        if (a < 0.8) return 0.3 + 0.14 * smooth(0.2, 0.75, a);
+        return hemLine(0.44, 0.06, -0.58, 0.8, 1.5, 2.4)(az);
+      },
+      // 上は毛量があって平ら、横は短く頭にそう
+      puff: (az, yy) => 0.075 * Math.exp(-(((yy - 0.62) / 0.32) ** 2)) * (0.55 + 0.45 * Math.cos(az) ** 2) - 0.06 * Math.max(0, yy - 0.86),
+      tuck: 0.02,
+      tuckBand: 0.12,
+      clumps: { n: 44, tip: 0.06, amp: 0.012, top: 0.6, a: 1.3 },
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    const r = rng(53);
+    // 前の短い前髪（前へ、少しぎざぎざに）
+    fringe(H, 9, -0.62, 0.62, 0.42, (t, i) => 0.034 + (i % 2) * 0.01 + r() * 0.006, 0.03, { pitch: 0.5, bend: 0.4, flat: 0.5, rr: 1.07, yaw: (t) => (t - 0.5) * 0.4 });
+    // 上：短く立った毛（平らにそろえる）
+    for (const [el, n, sp] of [[0.78, 8, 0.8], [1.0, 7, 0.85]])
+      for (let i = 0; i < n; i++) {
+        const az = -sp + (2 * sp * i) / (n - 1) + (r() - 0.5) * 0.08;
+        H.strand(az, el, 0.026 + r() * 0.008, 0.032, { pitch: 1.0, yaw: (r() - 0.5) * 0.5, bend: -0.05, flat: 0.5, rr: 1.06 });
+      }
+    H.shine(1.08, 0.62);
+  },
+  // ナオT：分け目（写真の左）から横・後ろへなでつけたオールバック（前は少し立ち上がる）と、短く刈り上げた横（フェード）
+  slick(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    // 刈り上げ：はだが少し見える、明るい色
+    const fade = look.fade != null ? look.fade : new THREE.Color(look.hair).lerp(new THREE.Color(0x8a8590), 0.35).lerp(new THREE.Color(look.skin), 0.18).getHex();
+    K.head.add(K.part(capGeo(H.HP, { front: 0.52, side: -0.22, nape: -0.62, rad: 1.016 }), fade, 0.008, 'hair', { rim: 0.4 }));
+    const PART = -0.78; // 分け目（キャラの右＝写真の左）
+    const o = {
+      rad: 1.055,
+      hem: (az) => {
+        const a = Math.abs(az);
+        if (a < 0.75) return 0.5 + 0.09 * smooth(0.1, 0.65, a);
+        return hemLine(0.59, az < 0 ? 0.5 : 0.42, 0.05, 0.75, 1.5, 2.6)(az);
+      },
+      // 前は分け目の反対がわが少し立ち上がる。分け目のがわは低く
+      puff: (az, yy) => 0.07 * Math.max(0, Math.cos(az - 0.25)) ** 2 * Math.exp(-(((yy - 0.66) / 0.28) ** 2)) - 0.02 * Math.max(0, yy - 0.95) - 0.025 * Math.exp(-(((az - PART) / 0.35) ** 2)),
+      tuck: (az) => 0.035 + 0.03 * Math.max(0, Math.cos(az)) ** 2,
+      tuckBand: 0.18,
+      part: PART,
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012, 'slant');
+    H.shine(1.075, 0.66, 1.0);
+  },
+  // トリキ：センターパート（前髪を左右に分けて、目じりのあたりまで外へカーブ。横は耳の上にそう）
+  curtain(hair, look, mat, line, K) {
+    const H = hairKit(hair, look, mat, line, K);
+    const o = {
+      rad: 1.09,
+      hem: (az) => {
+        const a = Math.abs(az);
+        if (a < 0.7) return 0.62 - 0.3 * smooth(0.0, 0.7, a);
+        return hemLine(0.32, -0.16, -0.56, 0.7, 1.55, 2.5)(az);
+      },
+      puff: (az, yy) => 0.02 * Math.sin(az) ** 2 * Math.exp(-(((yy - 0.1) / 0.5) ** 2)) + 0.045 * Math.exp(-(((yy - 0.62) / 0.35) ** 2)),
+      tuck: (az) => 0.02 + 0.03 * Math.sin(az) ** 2,
+      band: 0.3,
+      clumps: { n: 30, tip: 0.04, amp: 0.018, top: 0.7, a: 2.9 },
+      part: 0,
+    };
+    H.addTex(shellGeo(H.HP, o), 0.012);
+    // カーテンの前髪：分け目から左右へ、外へカーブして目じりまで
+    for (const sd of [-1, 1]) {
+      clumpOn(H, o, sd * 0.07, 1.02, 0.23, 0.062, { yaw: sd * 0.95, lift: 0.07, bend: 0.4, flat: 0.32 });
+      clumpOn(H, o, sd * 0.22, 0.96, 0.24, 0.062, { yaw: sd * 0.72, lift: 0.07, bend: 0.4, flat: 0.32 });
+      clumpOn(H, o, sd * 0.42, 0.86, 0.22, 0.06, { yaw: sd * 0.5, lift: 0.06, bend: 0.38, flat: 0.34 });
+      clumpOn(H, o, sd * 0.66, 0.7, 0.18, 0.058, { yaw: sd * 0.3, lift: 0.05, bend: 0.34, flat: 0.34 });
+      // 横（耳の上にそう）と後ろ
+      for (const [az, yy, len] of [[1.0, 0.5, 0.14], [1.35, 0.4, 0.12], [1.75, 0.35, 0.11], [2.2, 0.2, 0.11], [2.7, 0.05, 0.11]]) clumpOn(H, o, sd * az, yy, len, 0.058, { yaw: -sd * 0.05, lift: 0.02, bend: 0.4, flat: 0.38 });
+    }
+    H.shine(1.11, 0.6, 1.02);
+  },
+});
+
 // シュシュ（ふくらんだ輪）
 function scrunchieGeo() {
   const g = new THREE.TorusGeometry(0.042, 0.018, 8, 22);
@@ -3847,15 +4947,17 @@ const WIN_POSES = {
     P.bodyRise = 0.03 + Math.abs(b) * 0.04;
     P.kx = [0.1, 0.1];
   },
-  // たかのぶ：ダブルバイセップス（筋肉がふるえる）
+  // なお：写真のまま、こぶしを鼻にあてて大笑い（肩がゆれる）。もう片手はひざへ
   takanobu(P, t) {
-    P.sx = [-1.55, -1.55];
-    P.sz = [1.35, 1.35];
-    P.ex = [-2.2, -2.2];
-    P.chestX = -0.22 + 0.02 * Math.sin(t * 30);
-    P.headX = -0.15;
-    P.hz = [0.14, -0.14];
-    P.kx = [0.3, 0.3];
+    P.sx = [-2.25, -0.35];
+    P.sz = [-0.3, 0.35];
+    P.sy = [0.2, 0];
+    P.ex = [-2.55, -0.9];
+    P.chestX = 0.2 + 0.06 * Math.sin(t * 15);
+    P.headX = 0.12 + 0.04 * Math.sin(t * 15 + 0.6);
+    P.headY = -0.18;
+    P.spineY = -0.15;
+    P.kx = [0.35, 0.3];
   },
   // こうた：腕を組んで「ふん」とそっぽを向く
   kouta(P) {
@@ -3889,17 +4991,20 @@ const WIN_POSES = {
     P.hx = [0.25, 0.25];
     P.fx = [0.6, 0.6];
   },
-  // しょうた：片手を腰に、片手でピース（モデル立ち）
+  // しょうた：写真の決めポーズ（胸の前で両腕をクロスして手を上げ、片ひざを内に曲げる）
   shouta(P, t) {
-    P.sx = [0.15, -2.45];
-    P.sz = [0.85, 0.35];
-    P.ex = [-1.75, -2.45];
-    P.headZ = 0.14;
-    P.headY = -0.12;
-    P.spineY = 0.15;
-    P.hx = [0.12, -0.05];
-    P.hz = [0.0, 0.08];
-    P.kx = [0.25, 0.05];
+    P.sx = [-1.25, -1.4];
+    P.sz = [-0.55, -0.42];
+    P.sy = [0.35, 0.3];
+    P.ex = [-2.45, -2.3];
+    P.spineY = 0.18;
+    P.chestZ = 0.06;
+    P.headZ = -0.14;
+    P.headY = 0.12;
+    P.hx = [0.05, 0.3];
+    P.hz = [0.02, 0.22];
+    P.kx = [0.12, 0.95];
+    P.fx = [0.1, 0.5];
     P.bodyRise = 0.01 * Math.sin(t * 2);
   },
   // ちじわ：だるそうに手をふる（かぜ気味）
@@ -4047,7 +5152,7 @@ const CUTIN_POSES = {
     P.sz = [0.12, 0.12];
     P.ex = [-1.5, -1.5];
   },
-  // たかのぶ：ほえながら、こちらへ大きなパンチ
+  // なお：ほえながら、こちらへ大きなパンチ
   takanobu(P) {
     P.bodyX = 0.1;
     P.spineY = 0.45;
@@ -4167,14 +5272,14 @@ function cutinPose(P, def) {
 const BUSY_MODES = new Set(['punch', 'shoot', 'hurt', 'stun', 'ko', 'special', 'dash']);
 // 倒したあとの決めの身ぶり（キャラごと）
 export const KO_EMOTE = {
-  tora: 'laugh', even: 'flex', aomachi: 'point', tetsundo: 'drum', koudai: 'cheers', hayata: 'salute', takanobu: 'flex', kouta: 'cross', masashi: 'heart',
-  kousei: 'shrug', shouta: 'peace', chijiwa: 'cough', naot: 'bow', toriki: 'thumbs', minori: 'cute', mana: 'phone', ayana: 'clap', yuka: 'kick',
+  tora: 'laugh', even: 'flex', aomachi: 'point', tetsundo: 'drum', koudai: 'cheers', hayata: 'salute', takanobu: 'nose', kouta: 'cross', masashi: 'heart',
+  kousei: 'shrug', shouta: 'xpose', chijiwa: 'cough', naot: 'bow', toriki: 'thumbs', minori: 'cute', mana: 'phone', ayana: 'clap', yuka: 'kick',
 };
 // ロビーでときどきする身ぶり（キャラごと。main.js の lobbyEmote で使える）
 export const EMOTE_PICKS = {
   tora: ['laugh', 'flex', 'wave', 'thumbs'], even: ['wave', 'thumbs', 'flex', 'point'], aomachi: ['point', 'thumbs', 'wave', 'bow'],
-  tetsundo: ['drum', 'thumbs', 'laugh'], koudai: ['cheers', 'laugh', 'wave'], hayata: ['salute', 'wave', 'thumbs'], takanobu: ['flex', 'thumbs', 'laugh'],
-  kouta: ['cross', 'point', 'thumbs'], masashi: ['heart', 'peace', 'wave'], kousei: ['shrug', 'point', 'thumbs'], shouta: ['peace', 'wave', 'heart'],
+  tetsundo: ['drum', 'thumbs', 'laugh'], koudai: ['cheers', 'laugh', 'wave'], hayata: ['salute', 'wave', 'thumbs'], takanobu: ['nose', 'flex', 'thumbs'],
+  kouta: ['cross', 'point', 'thumbs'], masashi: ['heart', 'peace', 'wave'], kousei: ['shrug', 'point', 'thumbs'], shouta: ['xpose', 'peace', 'wave'],
   chijiwa: ['cough', 'wave', 'bow'], naot: ['bow', 'wave', 'thumbs'], toriki: ['thumbs', 'flex', 'wave'], minori: ['cute', 'wave', 'peace'],
   mana: ['phone', 'peace', 'wave'], ayana: ['clap', 'bow', 'wave'], yuka: ['kick', 'peace', 'wave'],
 };
@@ -4300,6 +5405,25 @@ function emotePose(P, e, k, t) {
     P.sz = [-0.05 - 0.22 * c, -0.05 - 0.22 * c];
     P.ex = [-1.55, -1.55];
     P.face = FACES.happy;
+  } else if (e === 'nose') {
+    // なお：こぶしを鼻にあてて大笑い
+    P.sx[0] = -2.25 * w - 0.05;
+    P.sz[0] = -0.3;
+    P.sy[0] = 0.2;
+    P.ex[0] = -2.55 * w;
+    P.chestX = (0.18 + 0.06 * Math.sin(t * 15)) * w;
+    P.headX = 0.1 * w;
+    P.headY = -0.15 * w;
+    P.face = FACES.happy;
+  } else if (e === 'xpose') {
+    // しょうた：写真の決めポーズ（胸の前で両腕をクロス）
+    P.sx = [-1.25 * w, -1.4 * w];
+    P.sz = [-0.55 * w + 0.12 * (1 - w), -0.42 * w + 0.12 * (1 - w)];
+    P.sy = [0.35 * w, 0.3 * w];
+    P.ex = [-2.45 * w, -2.3 * w];
+    P.headZ = -0.14 * w;
+    P.headY = 0.12 * w;
+    P.face = FACES.special;
   } else if (e === 'kick') {
     // けり
     P.hx[1] = 1.7 * w;

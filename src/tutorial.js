@@ -15,8 +15,8 @@ const STEPS = [
   { id: 'step', label: '移動', msg: '止まっているときに<em>横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', two: '止まっているときに<em>左の親指で横フリック</em>でステップ！<br><small>飛んでいるときはバレルロールになる</small>', need: 2, hint: 'side' },
   { id: 'uturn', label: '移動', msg: '<em>上→下の連続フリック</em>で、くるっと真後ろを向こう！', two: '<em>左の親指で上→下の連続フリック</em>で、くるっと真後ろを向こう！', need: 1, hint: 'updown' },
   { id: 'collect', label: 'スクランブル', msg: '移動を使いこなして<em>サクラ</em>を集めよう！<br><small>近くを通るだけで取れる。持つほど遅くなる</small>', need: 6, hint: null },
-  { id: 'deposit', label: 'スクランブル', msg: '青いダルマに近づいて、右下の<em>「預ける」を長押し</em>！<br><small>預けたサクラは倒されてもなくならない</small>', need: 4, hint: 'deposit' },
-  { id: 'attack', label: '攻撃', msg: '敵があらわれた！右の<em>顔アイコンをタップ</em>でロックオン。<br>近づくと<em>自動でパンチ</em>するよ', need: 4, hint: 'lock' },
+  { id: 'deposit', label: 'スクランブル', msg: '自分のチームの<em>青いダルマに近づく</em>と、サクラを<em>自動で預ける</em>！<br><small>預けたサクラは倒されてもなくならない</small>', need: 4, hint: null },
+  { id: 'attack', label: '攻撃', msg: '敵があらわれた！右の<em>顔アイコンをタップ</em>でロックオン。<br>近づくと<em>自動でパンチ</em>するよ', two: '敵があらわれた！右の<em>顔アイコン</em>か、<em>右の親指で敵をタップ</em>してロックオン。<br>近づくと<em>自動でパンチ</em>するよ', need: 4, hint: 'lock' },
   { id: 'om', label: '攻撃', msg: '下の<em>ディスクを上にフリック</em>して、ディスクの技を出そう！（先生やラーメンが出てくる）', need: 1, hint: 'om' },
   { id: 'ks', label: '攻撃', msg: 'まん中の<em>顔のアイコンを上にフリック</em>！パンチャースキル', need: 1, hint: 'ks' },
   { id: 'sp', label: '攻撃', msg: '最後に、戦況を一気に変える<em>スペシャル</em>！<br>光っている<em>SPボタン</em>をタップ', need: 1, hint: 'sp' },
@@ -204,14 +204,22 @@ export class Tutorial extends Match {
     sound.play('win');
     setTimeout(async () => {
       if (!this.running) return;
-      const ok = await this.app.confirm('チュートリアル完了！', 'このまま本番（CPUと4対4・スクランブル）をやってみる？', 'やってみる', 'ホームへ');
+      const i = await this.app.choose('チュートリアル完了！', '次はどうする？<br>本番は4対4・3分。CPUの強さは6段階で、あとからホームで変えられるよ。', ['本番をやってみる（CPU：やさしい）', '訓練場で自由に練習', 'ホームへ']);
       this.app.endMatch();
-      if (ok) {
+      if (i === 0) {
         this.app.save.mode = 'scramble';
         this.app.save.diff = 'easy';
+        const seen = this.app.save.seenRules || (this.app.save.seenRules = {});
+        const first = !seen.scramble;
+        seen.scramble = 1;
         saveSave(this.app.save);
-        this.app.startMatch();
-      } else this.app.showHome();
+        // はじめてなら、先にスクランブルのルール（勝ち方）を見せてから
+        if (first) {
+          this.app.showHome();
+          this.app.showRules('scramble', () => this.app.startMatch());
+        } else this.app.startMatch();
+      } else if (i === 1) this.app.startTraining();
+      else this.app.showHome();
     }, 1800);
   }
   dispose() {

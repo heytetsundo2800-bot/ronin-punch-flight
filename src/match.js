@@ -1,6 +1,6 @@
 // 1試合（4対4・3分）
 import * as THREE from 'three';
-import { MATCH_TIME, RESPAWN_TIME, TEAM, COMBAT, DIFFICULTY, MODES } from './config.js';
+import { MATCH_TIME, RESPAWN_TIME, TEAM, COMBAT, DIFFICULTY, MODES, diffKey, allyDiffKey } from './config.js';
 import { PUNCHERS, PUNCHER_IDS, OMAMORI } from './characters.js';
 import { buildStage } from './stage.js';
 import { Puncher } from './entity.js';
@@ -19,6 +19,7 @@ import { BlobShadows } from './shadow.js';
 import { GRADES } from './post.js';
 import { KO_EMOTE } from './model.js';
 import { applySynergy, updateSynergy, PAIRS, MACHIDA } from './kits.js';
+import { RULE_TEXT } from './rules.js';
 
 const _v = new THREE.Vector3();
 // スタンプ → 身ぶり（ナイス・ありがとう・集まれ・守って・攻める・ドンマイ・ガハハ・ごめん）
@@ -51,7 +52,8 @@ export class Match {
       sun.intensity = env.sun[1];
       sun.position.set(...env.sun[2]);
     }
-    this.diff = DIFFICULTY[opts.difficulty || 'normal'];
+    this.diffKey = diffKey(opts.difficulty || 'easy');
+    this.diff = DIFFICULTY[this.diffKey];
     this.time = 0;
     this.timeLeft = MATCH_TIME;
     this.phase = 'intro';
@@ -106,6 +108,7 @@ export class Match {
     } else this.buildRandom(opts, roster, myTeam);
     this.player = this.punchers.find((p) => p.isPlayer) || this.punchers[0];
     this.punchers.forEach((p, i) => (p.netId = i));
+    this.applyCpuLevels();
     // 相性（同じチームのカップル・町田の4人・敵どうし）。ホストも入った人も同じ組み合わせから同じ結果
     applySynergy(this);
     this.combat = new Combat(this);
@@ -141,6 +144,11 @@ export class Match {
     this.introCam = { t: 0 };
     sound.playBgm('battle');
     this.announce(MODES[opts.mode].name + (this.stage.name ? '\n' + this.stage.name : ''), -1, true);
+    // v1.7：はじめに「勝ち方」をひとこと（チュートリアル・訓練場では出さない）
+    if (!opts.solo && RULE_TEXT[opts.mode]) {
+      this.goalCard = el('div', 'goalcard', `<span>勝ち方</span><b>${RULE_TEXT[opts.mode].goal}</b>`);
+      app.hudRoot.appendChild(this.goalCard);
+    }
     // どっちのチームか、はじめにはっきり出す（赤チームなのに青に見えて混乱した、の対策）
     const myT = this.player ? this.player.team : 0;
     this._teamT = setTimeout(() => {
@@ -163,6 +171,7 @@ export class Match {
       for (const m of mons) g.add(buildMonster(m));
       const kinds = new Set(['akahon', 'tangocho', 'pencil']);
       for (const p of this.punchers) if (p.def.attack.proj) kinds.add(p.def.attack.proj);
+      for (const p of this.punchers) if (p.def.attack.shot && p.def.attack.shot.proj) kinds.add(p.def.attack.shot.proj);
       if (this.punchers.some((p) => p.def.skill.id === 'iceFrappe')) kinds.add('ice');
       if (this.punchers.some((p) => p.def.skill.id === 'oniden')) kinds.add('phone');
       if (this.punchers.some((p) => (p.omamori || []).includes('cookie'))) kinds.add('cookie');
@@ -213,7 +222,7 @@ export class Match {
         p.elem = def.elem || OMAMORI[p.omamori[0]].elem;
         p.omLv = (r.lv || [1, 1, 1, 1]).slice(0, 4);
       } else {
-        const lv = { easy: 1, normal: 2, hard: 3 }[opts.difficulty || 'normal'] || 1;
+        const lv = DIFFICULTY[diffKey(opts.difficulty)].omLv;
         p.omLv = [lv, lv, lv, lv];
       }
       this.punchers.push(p);
@@ -252,7 +261,7 @@ export class Match {
           p.elem = def.elem || OMAMORI[p.omamori[0]].elem;
           p.omLv = (opts.deckLv || []).slice();
         } else if (!isPlayer) {
-          const lv = { easy: 1, normal: 2, hard: 3 }[opts.difficulty || 'normal'] || 1;
+          const lv = DIFFICULTY[diffKey(opts.difficulty)].omLv;
           p.omLv = [lv, lv, lv, lv];
         }
         if (!isPlayer) {
@@ -283,6 +292,28 @@ export class Match {
     }
   }
 
+  // CPUの強さ（v1.7）：一人で遊ぶときは、敵がえらんだ強さ・味方は allyDiffKey。オンラインはみんな同じ強さ
+  applyCpuLevels() {
+    const key = this.diffKey;
+    const me = this.player ? this.player.team : 0;
+    const ally = this.online ? key : allyDiffKey(key);
+    for (const p of this.punchers) this.setCpuLevel(p, p.team === me ? ally : key);
+  }
+  setCpuLevel(p, key) {
+    if (!p.cpu) {
+      p.cpuKey = null;
+      p.cpuLv = null;
+      return;
+    }
+    p.cpuKey = DIFFICULTY[key] ? key : this.diffKey;
+    p.cpuLv = DIFFICULTY[p.cpuKey];
+  }
+  // ダルマの弾の強さ（一人で遊ぶときの、敵のダルマだけ弱くする。0＝撃たない）
+  guardK(team) {
+    if (this.online || !this.player || team === this.player.team) return 1;
+    return this.diff.guard;
+  }
+
   omOf(id) {
     return OMAMORI[id];
   }
@@ -295,6 +326,7 @@ export class Match {
     p.human = false;
     p.netId = this.punchers.length;
     this.punchers.push(p);
+    this.setCpuLevel(p, team === (this.player ? this.player.team : 0) ? allyDiffKey(this.diffKey) : this.diffKey);
     if (role) p.brain = new Brain(p, this, role);
     this.placeAtBase(p);
     if (this.hud) this.hud.addMember(p);
@@ -455,7 +487,7 @@ export class Match {
         I.lookX = this.input.lookX;
         I.lookY = this.input.lookY;
         I.lookActive = this.input.looking();
-        for (const e of this.input.events) I.events.push(e);
+        for (const e of this.input.events) I.events.push((e.look && e.type === 'tap' && this.tapLock(e)) || e);
         this.input.events.length = 0;
         for (const p of this.punchers) if (p.brain) p.brain.update(dt);
       } else {
@@ -527,6 +559,7 @@ export class Match {
       this.app.bigText('GO!', 'go');
       sound.play('go');
       this.input.enabled = true;
+
       for (const p of this.punchers) p.invuln = 0.5;
       return;
     }
@@ -622,6 +655,31 @@ export class Match {
     this.fx.just && this.fx.just(t);
     this.sfx('just', t);
     if (t.isPlayer) this.slowmo(0.35, 0.35);
+  }
+
+  // v1.7：右の親指で敵の上をタップしたら、ブーストではなくロックオン（近い敵ほど広くとる）
+  tapLock(e) {
+    const P = this.player;
+    if (!P || !P.alive || e.x == null) return null;
+    let best = null, bd = 1e9;
+    for (const o of this.punchers) {
+      // ロック中の相手はのぞく（そのままタップ＝ダッシュ攻撃。外すのは右の顔アイコンで）
+      if (o.team === P.team || !o.alive || o === P.lock) continue;
+      const d3 = o.pos.distanceTo(P.pos);
+      if (d3 > COMBAT.lockRange) continue;
+      _v.copy(o.pos);
+      _v.y += 0.3;
+      _v.project(this.camera);
+      if (_v.z > 1 || Math.abs(_v.x) > 1.05 || Math.abs(_v.y) > 1.05) continue;
+      const x = (_v.x * 0.5 + 0.5) * this.viewW, y = (-_v.y * 0.5 + 0.5) * this.viewH;
+      const r = clamp(1100 / Math.max(1, d3), 34, 80);
+      const d = Math.hypot(x - e.x, y - e.y);
+      if (d < r && d < bd) {
+        bd = d;
+        best = o;
+      }
+    }
+    return best ? { type: 'lock', target: best } : null;
   }
 
   lockCandidates(p) {
@@ -729,6 +787,7 @@ export class Match {
       punchers: this.punchers,
       char: this.opts.char,
       online: !!this.online,
+      diff: this.diffKey,
     });
   }
 

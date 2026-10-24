@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import './styles.css';
 import './theme.css';
 import { ICON, stageIcon } from './icons.js';
-import { VERSION, BUILD, MODES, DIFFICULTY, ELEM, TEAM, rankOf, RANKS, STAGES, STAGE_CHOICES, stageLabel, resolveStage } from './config.js';
+import { VERSION, BUILD, MODES, DIFFICULTY, DIFF_KEYS, diffKey, ELEM, TEAM, rankOf, RANKS, STAGES, STAGE_CHOICES, stageLabel, resolveStage } from './config.js';
 import { PUNCHERS, PUNCHER_IDS, OMAMORI, OMAMORI_IDS, KIND_COLOR, KIND_NAME, RARE_COLOR } from './characters.js';
 import { buildMonster, poseMonster, MONSTERS } from './monsters.js';
 import { projectileLook } from './fx.js';
@@ -12,6 +12,8 @@ import { Portraits } from './portraits.js';
 import { Input } from './input.js';
 import { Match } from './match.js';
 import { Tutorial } from './tutorial.js';
+import { Training } from './training.js';
+import { RULE_TEXT, ruleHtml } from './rules.js';
 import { sound } from './audio.js';
 import { loadSave, saveSave, applyResult, omLevel, weekId } from './save.js';
 import { net } from './net.js';
@@ -43,6 +45,39 @@ function partnerOf(id) {
   }
   if (MACHIDA.includes(id)) out.push({ title: '町田ブラザーズ', text: MACHIDA.map(nm).join('・') + 'の4人がそろうと、4人とも攻撃力とスピードアップ。' });
   return out;
+}
+
+// CPUの強さをえらぶ部品（6段階。◀ ▶ で変える。名前・目もり・説明）
+const DIFF_COLOR = ['#7dffb0', '#38d16a', '#3be6ff', '#ffd400', '#ff9d2e', '#ff3f5e'];
+function diffPickHtml(cls = '') {
+  return `<div class="diffpick ${cls}"><button class="dm" aria-label="CPUを弱くする">${ICON.back}</button><div class="dv"><div class="dn"><span>CPU</span><b></b></div><div class="pips">${DIFF_KEYS.map(() => '<i></i>').join('')}</div><small></small></div><button class="dp" aria-label="CPUを強くする">${ICON.next}</button></div>`;
+}
+function bindDiffPick(root, get, set) {
+  const box = root.querySelector('.diffpick');
+  if (!box) return () => {};
+  const show = () => {
+    const k = diffKey(get());
+    const i = DIFF_KEYS.indexOf(k);
+    const D = DIFFICULTY[k];
+    box.style.setProperty('--lvc', DIFF_COLOR[i] || '#fff');
+    box.dataset.k = k;
+    box.querySelector('b').textContent = D.name;
+    box.querySelector('small').textContent = D.desc;
+    box.querySelectorAll('.pips i').forEach((p, j) => p.classList.toggle('on', j <= i));
+    box.querySelector('.dm').disabled = i <= 0;
+    box.querySelector('.dp').disabled = i >= DIFF_KEYS.length - 1;
+  };
+  const step = (d) => {
+    const i = DIFF_KEYS.indexOf(diffKey(get())) + d;
+    if (i < 0 || i >= DIFF_KEYS.length) return;
+    set(DIFF_KEYS[i]);
+    show();
+    sound.play('ui');
+  };
+  box.querySelector('.dm').onclick = () => step(-1);
+  box.querySelector('.dp').onclick = () => step(1);
+  show();
+  return show;
 }
 
 class App {
@@ -321,6 +356,14 @@ class App {
     L.scene.add(L.model);
     L.charId = id;
     L.spin = Math.PI * 2;
+    // キャラえらびの窓に入れるための、頭の高さ（ふつうに浮かんでいるポーズで1回だけ測る。身ぶりでカメラが動かないように）
+    try {
+      poseModel(L.model, { mode: 'hover', t: 0.6, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.3, runPhase: 0, snap: true }, 1);
+      L.model.updateMatrixWorld(true);
+      L.charTop = L.model.userData.parts.head.getWorldPosition(new THREE.Vector3()).y + 0.4;
+    } catch (e) {
+      L.charTop = 1.35;
+    }
   }
   // ロビーのキャラをタップしたか（画面の上での、頭から足までの範囲）
   hitLobbyChar(x, y) {
@@ -363,6 +406,24 @@ class App {
       L.dw = { top, bot: Math.max(bot, top + 60) };
     }
     return L.dw;
+  }
+  // キャラえらびの画面：キャラを見せる窓（一覧の下〜説明の上。画面の px）。0.3秒ごとに測りなおす
+  charWindow(dt) {
+    const L = this.lobby;
+    L.cwT = (L.cwT || 0) - dt;
+    if (!L.cw || L.cwT <= 0) {
+      L.cwT = 0.3;
+      const H = this.viewH;
+      let top = H * 0.25, bot = H * 0.6;
+      const scr = document.querySelector('.screen.charsel');
+      const ls = scr && scr.querySelector('.charlist'), inf = scr && scr.querySelector('.info');
+      if (ls && inf) {
+        top = ls.getBoundingClientRect().bottom + 6;
+        bot = inf.getBoundingClientRect().top - 4;
+      }
+      L.cw = { top, bot: Math.max(bot, top + 90) };
+    }
+    return L.cw;
   }
   // 溜め→技→休む の1周で、いちばん大きく動いたときの大きさ（ディスク画面の窓からはみ出さないように）
   // 翼を広げる・のびあがるなど、ポーズで形が変わるので、1周を12回に分けて頂点で測る（光る板などの効果はのぞく）
@@ -525,13 +586,27 @@ class App {
     let dist = portrait ? 8.6 + (0.5 - Math.min(0.5, asp)) * 6 : 6.4;
     let ox = portrait ? 0.62 : 1.7;
     let ly = portrait ? 0.95 : 0.3;
+    let camY = 0.85;
     if (L.view === 'chars') {
-      // キャラ選び：カードと説明のあいだに、頭から足まで
+      // キャラ選び：一覧と説明のあいだの窓に、頭から足まで（v1.7：窓の大きさを測って、ぴったり入る距離と高さにする）
       dist = portrait ? 9.2 : 5.5;
       ox = portrait ? 0 : 1.2;
       ly = portrait ? -0.5 : 0.2;
+      if (portrait && L.model) {
+        const R = this.charWindow(dt);
+        const H = this.viewH, W = this.viewW;
+        const tf = Math.tan((L.cam.fov * Math.PI) / 360);
+        // 頭のてっぺん（髪をふくめて少し上まで。setLobbyChar で測った値）と足
+        const top = L.charTop || 1.35, bot = -1.0;
+        const ch = top - bot;
+        const hpx = Math.max(90, R.bot - R.top);
+        dist = clamp(Math.max((ch * H) / (0.92 * hpx * 2 * tf), 1.5 / (0.8 * 2 * tf * (W / H))), 5, 18);
+        camY = 0.6;
+        const yc = (top + bot) / 2;
+        const a = Math.atan((0.5 - (R.top + R.bot) / 2 / H) * 2 * tf);
+        ly = camY + dist * Math.tan(Math.atan((yc - camY) / dist) - a);
+      }
     }
-    let camY = 0.85;
     if (L.view === 'disc') {
       // ディスク：上の窓（見出しの下〜モンスター名の上）のまん中に、はみ出さない大きさでモンスター
       const R = this.discWindow(dt);
@@ -632,6 +707,18 @@ class App {
         m.remove();
         res(false);
       };
+    });
+  }
+
+  // いくつかの中からえらぶ（えらんだ番号を返す）
+  choose(title, body, labels) {
+    return new Promise((res) => {
+      const m = el('div', 'modal', `<div class="box"><h3>${title}</h3><div class="note" style="font-size:13px;color:#dfe5f2">${body}</div><div class="btns">${labels.map((l, i) => `<button class="btn ${i === 0 ? 'y' : 'k'}" data-i="${i}">${l}</button>`).join('')}</div></div>`);
+      this.root.appendChild(m);
+      m.querySelectorAll('button[data-i]').forEach((b) => (b.onclick = () => {
+        m.remove();
+        res(+b.dataset.i);
+      }));
     });
   }
 
@@ -772,14 +859,17 @@ class App {
          <button class="iconbtn share" aria-label="友だちに送る">${ICON.share}</button>
        </div>
        <div class="modecard">
-         <div class="hd"><b>REGULAR</b><span>CPU 4 VS 4</span></div>
+         <div class="hd"><b>REGULAR</b><button class="rulebtn" aria-label="ルールと勝ち方">${ICON.book}<span>ルール</span></button></div>
          <div class="rule"><button class="prev" aria-label="前のルール">${ICON.back}</button><div class="nm"></div><button class="next" aria-label="次のルール">${ICON.next}</button></div>
          <div class="sub"></div>
-         <div class="seg diff">${Object.keys(DIFFICULTY).map((k) => `<button data-k="${k}">${DIFFICULTY[k].name}</button>`).join('')}</div>
+         ${diffPickHtml()}
          <button class="stagebtn" aria-label="ステージをかえる"><span>STAGE</span><b></b><i>${ICON.next}</i></button>
        </div>
        <button class="battlebtn"><span class="en">BATTLE</span><span class="jp">バトル</span></button>
-       <button class="onlinebtn">${ICON.online}<b>フレンドとオンライン対戦</b><small>部屋をつくって LINE で招待（ベータ）</small></button>
+       <div class="subbtns">
+         <button class="trainbtn">${ICON.target}<b>訓練場</b><small>自由に練習</small></button>
+         <button class="onlinebtn">${ICON.online}<b>オンライン対戦</b><small>LINEで招待</small></button>
+       </div>
        <div class="homechar"><span class="en">${escapeHtml(def.en)}</span><div class="nm">${escapeHtml(def.name)}</div><div class="tp">${def.typeName}・${def.elemLabel || ELEM[def.elem].name}</div></div>
        <div style="flex:1"></div>
        <div class="tabs">
@@ -810,15 +900,10 @@ class App {
       showMode();
       sound.play('ui');
     };
-    const diffBtns = $$('.diff button', s);
-    const showDiff = () => diffBtns.forEach((b) => b.classList.toggle('on', b.dataset.k === S.diff));
-    showDiff();
-    diffBtns.forEach((b) => (b.onclick = () => {
-      S.diff = b.dataset.k;
+    bindDiffPick(s, () => S.diff, (k) => {
+      S.diff = k;
       saveSave(S);
-      showDiff();
-      sound.play('ui');
-    }));
+    });
     const stBtn = $('.stagebtn', s);
     const showStage = () => ($('b', stBtn).innerHTML = stageIcon(S.stage) + escapeHtml(stageLabel(S.stage)));
     showStage();
@@ -831,7 +916,23 @@ class App {
     };
     $('.battlebtn', s).onclick = () => {
       sound.play('ui');
+      // はじめてのルールは、先に「どんなルールか・勝ち方」を見せる
+      const seen = S.seenRules || (S.seenRules = {});
+      if (!seen[S.mode]) {
+        seen[S.mode] = 1;
+        saveSave(S);
+        this.showRules(S.mode, () => this.startMatch());
+        return;
+      }
       this.startMatch();
+    };
+    $('.rulebtn', s).onclick = () => {
+      sound.play('ui');
+      this.showRules(S.mode);
+    };
+    $('.trainbtn', s).onclick = () => {
+      sound.play('ui');
+      this.startTraining();
     };
     $('.onlinebtn', s).onclick = () => {
       sound.play('ui');
@@ -1142,9 +1243,9 @@ class App {
       $('.ropts', s).innerHTML = host
         ? `<div class="rule"><button class="prev" aria-label="前のルール">${ICON.back}</button><div class="nm">${M.name}</div><button class="next" aria-label="次のルール">${ICON.next}</button></div>
            <div class="toggle"><span>ステージ</span><div class="seg stg" style="margin:0;width:200px;background:rgba(255,255,255,0.1)">${STAGE_CHOICES.map((k) => `<button data-k="${k}" class="${(st.stage || 'random') === k ? 'on' : ''}">${k === 'random' ? 'おまかせ' : STAGES[k].short}</button>`).join('')}</div></div>
-           <div class="toggle"><span>CPUの強さ</span><div class="seg dif" style="margin:0;width:180px;background:rgba(255,255,255,0.1)">${Object.keys(DIFFICULTY).map((k) => `<button data-k="${k}" class="${st.diff === k ? 'on' : ''}">${DIFFICULTY[k].name}</button>`).join('')}</div></div>
+           <div class="toggle dtog"><span>CPUの強さ</span>${diffPickHtml('wide')}</div>
            <label class="toggle"><span>あいた席をCPUで埋める</span><input type="checkbox" class="fill" ${st.fill ? 'checked' : ''}></label>`
-        : `<div class="row sb"><span>ルール</span><b>${M.name}</b></div><div class="row sb"><span>ステージ</span><b>${stageLabel(st.stage)}</b></div><div class="row sb"><span>CPU</span><b>${st.fill ? (DIFFICULTY[st.diff] || DIFFICULTY.normal).name : 'なし'}</b></div>`;
+        : `<div class="row sb"><span>ルール</span><b>${M.name}</b></div><div class="row sb"><span>ステージ</span><b>${stageLabel(st.stage)}</b></div><div class="row sb"><span>CPU</span><b>${st.fill ? DIFFICULTY[diffKey(st.diff)].name + '（' + (DIFF_KEYS.indexOf(diffKey(st.diff)) + 1) + '/6）' : 'なし'}</b></div>`;
       if (host) {
         const ro = $('.ropts', s);
         $('.prev', ro).onclick = () => {
@@ -1155,7 +1256,11 @@ class App {
           room.setOpt('mode', MODE_KEYS[(MODE_KEYS.indexOf(st.mode) + 1) % 3]);
           sound.play('ui');
         };
-        $$('.dif button', ro).forEach((b) => (b.onclick = () => room.setOpt('diff', b.dataset.k)));
+        bindDiffPick(ro, () => room.state.diff, (k) => {
+          room.setOpt('diff', k);
+          this.save.diff = k;
+          saveSave(this.save);
+        });
         $$('.stg button', ro).forEach((b) => (b.onclick = () => {
           room.setOpt('stage', b.dataset.k);
           this.save.stage = b.dataset.k;
@@ -1194,7 +1299,7 @@ class App {
     this.screenEl.innerHTML = '';
     this.renderRoom = null;
     this.paused = false;
-    const opts = { mode: MODES[cfg.mode] ? cfg.mode : 'scramble', stage: STAGES[cfg.stage] ? cfg.stage : 'sakura', char: cfg.roster[meIdx].char, difficulty: DIFFICULTY[cfg.diff] ? cfg.diff : 'normal', playerName: this.save.name || 'プレイヤー', roster: cfg.roster, meIdx };
+    const opts = { mode: MODES[cfg.mode] ? cfg.mode : 'scramble', stage: STAGES[cfg.stage] ? cfg.stage : 'sakura', char: cfg.roster[meIdx].char, difficulty: diffKey(cfg.diff), playerName: this.save.name || 'プレイヤー', roster: cfg.roster, meIdx };
     this.match = room.role === 'host' ? new HostMatch(this, opts, room) : new ClientMatch(this, opts, room);
     this.match.resize(this.viewW, this.viewH);
     if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);
@@ -1215,37 +1320,52 @@ class App {
   showChars(selId) {
     const S = this.save;
     let cur = selId || S.char;
+    let open = false; // 説明をくわしく見せているか
     this.setLobbyChar(cur);
     this.lobby.pose = 'hover';
+    // v1.7：キャラが一覧や説明にかくれないように、キャラは「一覧の下〜説明の上」の窓にぴったり入れる（updateLobby の charWindow）
     const s = this.setScreen(
       `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>パンチャー</h2></div>
        <div class="charlist">${PUNCHER_IDS.map((id) => `<button data-id="${id}" style="--e:${ELEM[PUNCHERS[id].elem].color}"><img alt="" ${this.porImg(id, 0)}><div>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</div>${partnerOf(id).length ? '<i class="pr">♥</i>' : ''}</button>`).join('')}</div>
-       <div style="flex:1;min-height:150px"></div>
-       <div class="card info" style="max-height:46vh;overflow-y:auto;touch-action:pan-y"></div>
+       <div class="charview"></div>
+       <div class="card info cinfo"></div>
        <button class="btn y wide pick">このキャラで戦う</button>`,
       'panel charsel'
     );
     this.fillImgs(s, cur);
-    s.style.background = 'linear-gradient(180deg, rgba(14,18,32,0.9) 0, rgba(14,18,32,0.0) 26%, rgba(14,18,32,0.0) 40%, rgba(14,18,32,0.92) 56%)';
+    s.style.background = 'linear-gradient(180deg, rgba(14,18,32,0.9) 0, rgba(14,18,32,0.0) 22%, rgba(14,18,32,0.0) 62%, rgba(14,18,32,0.9) 78%)';
     const info = $('.info', s);
+    const bar = (n) => `<i class="sb">${[1, 2, 3, 4, 5].map((k) => `<b class="${k <= n ? 'on' : ''}"></b>`).join('')}</i>`;
     const render = () => {
       const d = PUNCHERS[cur];
       $$('.charlist button', s).forEach((b) => b.classList.toggle('on', b.dataset.id === cur));
       const st = d.stat;
-      const pts = [
-        [55, 50 - st.atk * 8],
-        [55 + st.hp * 7.5, 50 + st.hp * 4.5],
-        [55 - st.spd * 7.5, 50 + st.spd * 4.5],
-      ];
       const cs = S.charStats[cur];
       const syn = partnerOf(cur);
-      info.innerHTML = `<div class="statrow"><div style="flex:1"><div style="font-size:20px">${escapeHtml(d.name)}</div><div class="note">${d.typeName}タイプ・属性：<span style="color:${ELEM[d.elem].color}">${escapeHtml(d.elemLabel || ELEM[d.elem].name)}</span>${d.elemLabel ? `<small>（中身は${ELEM[d.elem].name}）</small>` : ''}</div><p>${escapeHtml(d.profile)}</p>${cs ? `<div class="note">このキャラで ${cs.plays}戦 ${cs.wins}勝</div>` : ''}</div>
-        <svg class="stats3" viewBox="0 0 110 100"><polygon points="55,10 98,72 12,72" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.3)"/><polygon points="${pts.map((p) => p.join(',')).join(' ')}" fill="rgba(255,212,0,0.55)" stroke="#ffd400" stroke-width="2"/><text x="55" y="8" fill="#fff" font-size="9" text-anchor="middle">こうげき</text><text x="101" y="84" fill="#fff" font-size="9" text-anchor="end">たいりょく</text><text x="9" y="84" fill="#fff" font-size="9">スピード</text></svg></div>
-        <div class="skillbox"><span class="tag">スキル</span><div><b>${escapeHtml(d.skill.name)}</b>（${d.skill.cd}秒）<p>${escapeHtml(d.skill.desc)}</p></div></div>
-        <div class="skillbox"><span class="tag sp">SP</span><div><b>${escapeHtml(d.special.name)}</b><p>${escapeHtml(d.special.desc)}</p></div></div>
-        <div class="skillbox"><span class="tag" style="background:#ddd">通常</span><div><b>${escapeHtml(d.attack.label || (d.attack.kind === 'melee' ? '近距離パンチ' : '遠距離ショット'))}</b><p>${escapeHtml(d.attack.desc || (d.attack.kind === 'melee' ? '近づくと自動でパンチ。最後の一発でふっとばす' : 'はなれた敵を自動で撃つ（インクのたま）'))}</p></div></div>
-        ${d.passive ? `<div class="skillbox"><span class="tag pv">とくせい</span><div><b>${escapeHtml(d.passive.name)}</b><p>${escapeHtml(d.passive.desc)}</p></div></div>` : ''}
-        ${syn.map((x) => `<div class="skillbox"><span class="tag syn">相性</span><div><b>${escapeHtml(x.title)}</b><p>${escapeHtml(x.text)}</p></div></div>`).join('')}`;
+      const atkLabel = d.attack.label || (d.attack.kind === 'melee' ? '近距離パンチ' : '遠距離ショット');
+      const atkDesc = d.attack.desc || (d.attack.kind === 'melee' ? '近づくと自動でパンチ。最後の一発でふっとばす' : 'はなれた敵を自動で撃つ（インクのたま）');
+      info.innerHTML = `<div class="ctop"><div class="cname"><b>${escapeHtml(d.name)}</b><span>${d.typeName}・<span style="color:${ELEM[d.elem].color}">${escapeHtml(d.elemLabel || ELEM[d.elem].name)}</span></span></div>
+          <div class="cstat"><span>こうげき</span>${bar(st.atk)}<span>たいりょく</span>${bar(st.hp)}<span>スピード</span>${bar(st.spd)}</div></div>
+        <div class="cline"><span class="tag">スキル</span><b>${escapeHtml(d.skill.name)}</b><small>（${d.skill.cd}秒）</small></div>
+        <div class="cline"><span class="tag sp">SP</span><b>${escapeHtml(d.special.name)}</b></div>
+        <div class="cline"><span class="tag" style="background:#ddd">通常</span><b>${escapeHtml(atkLabel)}</b></div>
+        ${d.passive ? `<div class="cline"><span class="tag pv">とくせい</span><b>${escapeHtml(d.passive.name)}</b></div>` : ''}
+        <button class="more">${open ? 'とじる ▲' : 'くわしく ▼'}</button>
+        <div class="cdetail">
+          <p>${escapeHtml(d.profile)}</p>${cs ? `<div class="note">このキャラで ${cs.plays}戦 ${cs.wins}勝</div>` : ''}${d.elemLabel ? `<div class="note">属性「${escapeHtml(d.elemLabel)}」の中身は${ELEM[d.elem].name}</div>` : ''}
+          <div class="skillbox"><span class="tag">スキル</span><div><b>${escapeHtml(d.skill.name)}</b>（${d.skill.cd}秒）<p>${escapeHtml(d.skill.desc)}</p></div></div>
+          <div class="skillbox"><span class="tag sp">SP</span><div><b>${escapeHtml(d.special.name)}</b><p>${escapeHtml(d.special.desc)}</p></div></div>
+          <div class="skillbox"><span class="tag" style="background:#ddd">通常</span><div><b>${escapeHtml(atkLabel)}</b><p>${escapeHtml(atkDesc)}</p></div></div>
+          ${d.passive ? `<div class="skillbox"><span class="tag pv">とくせい</span><div><b>${escapeHtml(d.passive.name)}</b><p>${escapeHtml(d.passive.desc)}</p></div></div>` : ''}
+          ${syn.map((x) => `<div class="skillbox"><span class="tag syn">相性</span><div><b>${escapeHtml(x.title)}</b><p>${escapeHtml(x.text)}</p></div></div>`).join('')}
+        </div>`;
+      info.classList.toggle('open', open);
+      $('.more', info).onclick = () => {
+        open = !open;
+        sound.play('ui');
+        render();
+        this.lobby.cwT = 0; // 窓の大きさが変わったので、すぐ測りなおす
+      };
     };
     render();
     const list = $('.charlist', s);
@@ -1411,7 +1531,11 @@ class App {
        <div class="card">
          <button class="btn wide k tutbtn">操作の練習（チュートリアル）</button>
          <div style="height:8px"></div>
+         <button class="btn wide k trainbtn2">訓練場（自由に練習）</button>
+         <div style="height:8px"></div>
          <button class="btn wide k how">遊び方・操作の一覧</button>
+         <div style="height:8px"></div>
+         <button class="btn wide k rulesbtn">ルールと勝ち方</button>
          <div style="height:8px"></div>
          <button class="btn wide k sharebtn">友だちに送る（LINEなど）</button>
          <div style="height:8px"></div>
@@ -1492,7 +1616,9 @@ class App {
       this.applyDpr();
     }));
     $('.tutbtn', s).onclick = () => this.startTutorial();
+    $('.trainbtn2', s).onclick = () => this.startTraining();
     $('.how', s).onclick = () => this.showHowto();
+    $('.rulesbtn', s).onclick = () => this.showRules(this.save.mode);
     $('.sharebtn', s).onclick = () => this.share();
     $('.report', s).onclick = () => this.showReport();
     $('.back', s).onclick = () => this.showHome();
@@ -1545,12 +1671,45 @@ class App {
     };
   }
 
+  // ルールの説明（3つのルールをタブで切りかえ）。onBattle があれば「バトルへ」ボタン
+  showRules(k, onBattle) {
+    let cur = MODE_KEYS.includes(k) ? k : 'scramble';
+    const m = el(
+      'div',
+      'modal rules',
+      `<div class="box"><h3>ルールと勝ち方</h3>
+        <div class="seg rtabs">${MODE_KEYS.map((x) => `<button data-k="${x}">${escapeHtml(RULE_TEXT[x].short)}</button>`).join('')}</div>
+        <div class="rcont"></div>
+        <p class="note" style="margin-top:8px">どのルールも4対4・3分。相手をたおすと、相手は5秒後に自分の陣地から復活する。操作は「遊び方」と「訓練場」で練習できる。</p>
+        <div class="btns">${onBattle ? '<button class="btn y go">わかった！バトルへ</button>' : ''}<button class="btn ${onBattle ? 'k' : 'y'} close">とじる</button></div></div>`
+    );
+    this.root.appendChild(m);
+    const show = () => {
+      $$('.rtabs button', m).forEach((b) => b.classList.toggle('on', b.dataset.k === cur));
+      $('.rcont', m).innerHTML = ruleHtml(cur, escapeHtml);
+      $('.rcont', m).scrollTop = 0;
+    };
+    $$('.rtabs button', m).forEach((b) => (b.onclick = () => {
+      cur = b.dataset.k;
+      show();
+      sound.play('ui');
+    }));
+    show();
+    $('.close', m).onclick = () => m.remove();
+    if (onBattle)
+      $('.go', m).onclick = () => {
+        m.remove();
+        onBattle();
+      };
+  }
+
   showHowto() {
     const two = this.settings.scheme !== 'one';
     const rows = two
       ? `<b>左で長押し</b><span>アクセル。前へ飛ぶ（地面では走る）。離すとその場で止まる。左の指をすべらせても向きは変わらない</span>
-        <b>右でなぞる</b><span>視点（向き）を動かす。飛びながらでも、止まっていても。飛ぶ方向もこれで決まる</span>
+        <b>右でなぞる</b><span>視点（向き）を動かす。飛びながらでも、止まっていても。飛ぶ方向もこれで決まる。すばやくなぞると大きく回る</span>
         <b>タップ</b><span>ブーストダッシュ（黄色いゲージを1つ使う。左右どちらの親指でも）。そのあとは自動で飛び続ける</span>
+        <b>右で敵をタップ</b><span>その敵をロックオン（もう一度タップで外す）</span>
         <b>フリック</b><span>回避・ブレーキ・ターンのフリックは左の親指で（右でなぞると視点になる）</span>`
       : `<b>長押し</b><span>前へ飛ぶ（地面では走る）。離すとその場で止まる</span>
         <b>長押し＋スライド</b><span>飛びながら旋回（押した所にスティックが出る）</span>
@@ -1572,14 +1731,16 @@ class App {
         <b>SPボタン</b><span>ゲージが満タンでスペシャル</span>
         <b>ロック中タップ</b><span>ダッシュ攻撃（ゲージ2つ）。相手の溜めをつぶせる</span>
       </div>
-      <p class="note" style="margin-top:10px">ジャスト回避：攻撃が当たる直前にフリックすると、ダメージなしで相手にスキができる。<br>壁にむかってブーストすると壁キックで反転。地面に立つとブーストが早く回復。<br>属性：火→風→水→火 の順に強い（1.2倍）。</p>
+      <p class="note" style="margin-top:10px">ジャスト回避：攻撃が当たる直前にフリックすると、ダメージなしで相手にスキができる。<br>壁にむかってブーストすると壁キックで反転。長押しで壁にぶつかると、壁にそって上へすべる。地面に立つとブーストが早く回復。<br>スクランブルのサクラは、自分のダルマの近くで自動で預ける。<br>属性：火→風→水→火 の順に強い（1.2倍）。</p>
       <h3 style="margin-top:12px">ルール</h3>
       ${MODE_KEYS.map((k) => `<p style="margin:6px 0 2px;color:#ffd400">${MODES[k].name}</p><ol>${MODES[k].howto.map((h) => `<li>${h}</li>`).join('')}</ol>`).join('')}
+      <button class="btn k wide morerules" style="margin-top:6px">ルールと勝ち方を図でくわしく</button>
       <p class="note">パソコン：WASD/矢印で旋回、スペースで飛ぶ、J でブースト、Q/E で回避、X でバック、R でターン、1〜5 でスキル、F でスペシャル、Tab でロックオン。</p>
       <div class="btns"><button class="btn y close">とじる</button></div></div>`
     );
     this.root.appendChild(m);
     m.querySelector('.close').onclick = () => m.remove();
+    m.querySelector('.morerules').onclick = () => this.showRules(this.match ? this.match.opts.mode : this.save.mode);
   }
 
   // ===== 試合 =====
@@ -1600,6 +1761,18 @@ class App {
       friends: (this.friendList || []).slice(),
       teams: this.testTeams || null, // テスト用（ふだんは null）
     });
+    this.match.resize(this.viewW, this.viewH);
+    if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);
+  }
+  // 訓練場（時間制限なし・サンドバッグ相手に練習。ランクや点は変わらない）
+  startTraining() {
+    if (this.match) this.endMatch();
+    if (this.settings.quality === 'auto' && this.post.enabled) this.post.bloomOn = true;
+    this.screenEl.innerHTML = '';
+    this.paused = false;
+    const S = this.save;
+    const deck = S.decks[S.char];
+    this.match = new Training(this, { mode: 'scramble', stage: resolveStage(S.stage), char: S.char, difficulty: 'zero', playerName: S.name || 'プレイヤー', deck, deckLv: deck.map((id) => omLevel(S, id)) });
     this.match.resize(this.viewW, this.viewH);
     if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);
   }
@@ -1633,8 +1806,9 @@ class App {
     this.input.enabled = false;
     this.input.reset();
     sound.play('uiBack');
-    const isTut = this.match.isTutorial;
-    const m = el('div', 'modal', `<div class="box"><h3>ポーズ</h3><div class="btns"><button class="btn y resume">つづける</button><button class="btn k how">遊び方</button><button class="btn red quit">${isTut ? '練習をやめる' : 'あきらめる（負けになる）'}</button></div></div>`);
+    const isTut = this.match.isTutorial || this.match.isTraining;
+    const quitLabel = this.match.isTraining ? '訓練場を出る' : isTut ? '練習をやめる' : 'あきらめる（負けになる）';
+    const m = el('div', 'modal', `<div class="box"><h3>ポーズ</h3><div class="btns"><button class="btn y resume">つづける</button><button class="btn k how">遊び方</button>${this.match.isTutorial || this.match.isTraining ? '' : '<button class="btn k rules">ルールと勝ち方</button>'}<button class="btn red quit">${quitLabel}</button></div></div>`);
     this.root.appendChild(m);
     m.querySelector('.resume').onclick = () => {
       m.remove();
@@ -1643,6 +1817,7 @@ class App {
       if (this.match && this.match.phase === 'play') this.input.enabled = true;
     };
     m.querySelector('.how').onclick = () => this.showHowto();
+    if (m.querySelector('.rules')) m.querySelector('.rules').onclick = () => this.showRules(this.match ? this.match.opts.mode : 'scramble');
     m.querySelector('.quit').onclick = () => {
       m.remove();
       if (isTut) {

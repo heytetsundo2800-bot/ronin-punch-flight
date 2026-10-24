@@ -43,8 +43,9 @@ export class Brain {
     this.ignore.set(o, this.m.time + sec);
   }
 
+  // CPUの強さ（v1.7：1人ずつ。match.js の setCpuLevel）
   get diff() {
-    return this.m.diff;
+    return this.p.cpuLv || this.m.diff;
   }
 
   update(dt) {
@@ -82,13 +83,17 @@ export class Brain {
       }
     }
     const hpLow = p.hp < p.maxHp * 0.35;
+    // 戦うかどうか（いちばん弱いCPUは戦わない。弱いCPUは、ときどきだけ追いかける）
+    const D = this.diff;
+    this.fightOK = D.atk !== false && Math.random() < (D.chase == null ? 1 : D.chase);
+    if (D.atk === false) p.lock = null;
     let goal = null;
     if (mode.key === 'scramble') goal = this.decideScramble(enemies, near, nd, hpLow);
     else if (mode.key === 'flag') goal = this.decideFlag(enemies, near, nd, hpLow);
     else goal = this.decideBall(enemies, near, nd, hpLow);
     // 目の前の敵とは戦う（大事な目的の途中は、すぐ近くでねらってくる敵だけ）
     const busy = goal && ['deposit', 'guardian', 'goalrun', 'carry'].includes(goal.kind);
-    if (near) {
+    if (near && this.fightOK) {
       const threat = nd < 4.5 && near.lock === p;
       if (!busy && nd < 11 && (this.role !== 'collector' || nd < 5 || near.lock === p)) {
         if (!p.lock || p.lock.isGuardian || p.lock.pos.distanceTo(p.pos) > 18) p.lock = near;
@@ -98,10 +103,46 @@ export class Brain {
         goal = { kind: 'fight', obj: near, arrive: 2.2 };
       }
     }
+    if (!this.fightOK && goal && (goal.kind === 'fight' || goal.kind === 'guardian')) goal = this.calmGoal(goal);
     if (goal && goal.kind === 'guardian' && goal.obj && goal.obj.pos.distanceTo(p.pos) < 20) p.lock = goal.obj;
     if (goal && goal.kind !== 'fight' && goal.kind !== 'guardian' && p.lock && !p.lock.isGuardian && p.lock.pos.distanceTo(p.pos) > 16) p.lock = null;
     this.goal = goal;
     this.useSkills(enemies, near, nd, hpLow);
+  }
+
+  // 戦わないときの目的：スクランブル＝サクラを拾う／預ける、フラッグ＝旗、ボール＝ボールを拾う。なければ近くをただよう
+  calmGoal(prev) {
+    const p = this.p, M = this.m, mode = M.mode;
+    if (mode.key === 'scramble') {
+      if (p.carry.sakura.length >= 3) return { kind: 'deposit', pos: M.guardians[p.team].pos, arrive: 7, obj: M.guardians[p.team] };
+      let best = null, bd = 1e9;
+      for (const it of mode.field.items) {
+        if (it.state !== 'field' || this.ignored(it)) continue;
+        const d = it.pos.distanceTo(p.pos);
+        if (d < bd) {
+          bd = d;
+          best = it;
+        }
+      }
+      if (best) return { kind: 'collect', pos: best.pos, arrive: 0.5, obj: best };
+    } else if (mode.key === 'flag') {
+      const mine = mode.flags[p.team];
+      if (mine.wait <= 0 && mine.state !== 'carried') return { kind: 'getflag', pos: mine.pos, arrive: 0.5 };
+    } else if (mode.balls) {
+      let best = null, bd = 1e9;
+      for (const b of mode.balls) {
+        if (b.state !== 'field' || this.ignored(b)) continue;
+        const d = b.pos.distanceTo(p.pos);
+        if (d < bd) {
+          bd = d;
+          best = b;
+        }
+      }
+      if (best && p.carry.balls.length < 4) return { kind: 'collect', pos: best.pos, arrive: 0.5, obj: best };
+    }
+    // 自分の陣地のまわりをただよう
+    const home = M.stage.bases[p.team].respawn[p.slot % M.stage.bases[p.team].respawn.length];
+    return { kind: 'guard', pos: home.clone().add(new THREE.Vector3(rand(-14, 14), rand(0, 6), rand(-14, 14))), arrive: 6 };
   }
 
   decideScramble(enemies, near, nd, hpLow) {
@@ -272,7 +313,7 @@ export class Brain {
     const td = target ? target.pos.distanceTo(p.pos) : 1e9;
     // スペシャル
     // （使いどころはキャラごとのヒント：characters.js の special.ai／kits.js）
-    if (p.sp >= 1 && aiWantsSP(this.m, p, enemies, hpLow)) {
+    if (p.sp >= 1 && D.sp !== false && aiWantsSP(this.m, p, enemies, hpLow)) {
       ev.push({ type: 'special' });
       this.skillCd = 1.5;
       return;
@@ -288,6 +329,9 @@ export class Brain {
     for (let i = 0; i < p.omamori.length; i++) {
       const om = OMAMORI[p.omamori[i]];
       if (p.omCd[i] > 0) continue;
+      // 弱いCPU：ディスクを使わない／攻撃しないディスクだけ
+      if (D.disc === 'none') break;
+      if (D.disc === 'safe' && (om.kind === 'ATK' || om.kind === 'TRAP' || om.id === 'screw' || om.id === 'book')) continue;
       const slot = i < 2 ? i : i + 1;
       // 攻撃にも使えるムーブ（スクリュー先生＝すぐ近くの敵を打ち上げる、ブック＝ねらった敵へ突進）
       if (om.id === 'screw' || om.id === 'book') {
@@ -499,7 +543,7 @@ export class Brain {
       this.dashCd = rand(1.5, 3.5);
     }
     // ダッシュ攻撃
-    if (g.kind === 'fight' && p.lock === g.obj && dist < 14 && dist > 5 && p.boost >= 3 && this.dashCd <= 0 && p.def.attack.kind === 'melee' && Math.random() < this.diff.aim * 0.5) {
+    if (g.kind === 'fight' && p.lock === g.obj && dist < 14 && dist > 5 && p.boost >= 3 && this.dashCd <= 0 && p.def.attack.kind === 'melee' && this.diff.atk !== false && (this.diff.lv || 4) >= 3 && Math.random() < this.diff.aim * 0.5) {
       p.intent.events.push({ type: 'tap' });
       this.dashCd = rand(2, 4);
     }

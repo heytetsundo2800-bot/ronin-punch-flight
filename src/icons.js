@@ -37,6 +37,9 @@ export const ICON = {
   refresh: S('<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/>'),
   iosShare: S('<path d="M12 3v11"/><path d="m8 7 4-4 4 4"/><path d="M8 10H6v10h12V10h-2"/>'),
   exit: S('<path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/>'),
+  // v1.7：訓練場（的）・ルール（本）
+  target: S('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>'),
+  book: S('<path d="M4 5.5c2.6-1 5.3-1 8 .8 2.7-1.8 5.4-1.8 8-.8v13c-2.6-1-5.3-1-8 .8-2.7-1.8-5.4-1.8-8-.8z"/><path d="M12 6.3v13"/>'),
 };
 
 export function stageIcon(k) {

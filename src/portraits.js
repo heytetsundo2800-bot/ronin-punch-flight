@@ -30,7 +30,14 @@ export class Portraits {
     // 顔アイコンは目を開けたふつうの顔（まばたきの途中で撮らない）
     const st = { mode, t: 0.6, speed01: 0, turn: 0, punchSide: 1, punchPhase: 0.35, heavy: false, runPhase: 0, snap: true, face: calm ? FACES.neutral : -1 };
     poseModel(model, st, 1);
-    if (kind === 'cut' && model.userData.glasses) model.userData.glasses.visible = false; // アオッチ：メガネを外したところ
+    if (kind === 'face') {
+      // 顔アイコン：グローブで顔（メガネ・マスク・口）がかくれないように、腕を下げる
+      for (const a of model.userData.parts.arms) {
+        a.shoulder.rotation.set(-0.42, 0, 0.3 * a.side);
+        a.elbow.rotation.set(-1.75, 0, 0);
+      }
+    }
+    if (kind === 'cut' && model.userData.glasses && PUNCHERS[id].special && PUNCHERS[id].special.id === 'glassesOff') model.userData.glasses.visible = false; // アオッチ：メガネを外したところ
     model.updateMatrixWorld(true);
     const head = model.userData.parts.head;
     const hp = new THREE.Vector3();
