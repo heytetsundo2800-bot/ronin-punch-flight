@@ -66,7 +66,7 @@ async def run(b, stage):
     pg = await ctx.new_page()
     errs = []
     pg.on('pageerror', lambda e: errs.append(str(e)))
-    save = {'name': 'テスト', 'tutorial': True, 'char': 'tora', 'mode': 'scramble', 'diff': 'normal', 'stage': stage}
+    save = {'name': 'テスト', 'tutorial': True, 'seenRules': {'scramble': 1, 'flag': 1, 'ball': 1}, 'char': 'tora', 'mode': 'scramble', 'diff': 'normal', 'stage': stage}
     await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify(%s))" % json.dumps(save, ensure_ascii=False))
     await pg.goto(U)
     await pg.wait_for_selector('#boot', state='detached', timeout=30000)

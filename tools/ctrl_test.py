@@ -37,7 +37,7 @@ async def main():
         pg = await ctx.new_page()
         logs = []
         pg.on('pageerror', lambda e: logs.append('PAGEERROR: ' + str(e)))
-        await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'tora', mode:'scramble', diff:'easy', stage:'sakura'}))")
+        await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, seenRules:{scramble:1,flag:1,ball:1}, char:'tora', mode:'scramble', diff:'easy', stage:'sakura'}))")
         await pg.goto(URL)
         await pg.wait_for_timeout(1500)
         await pg.mouse.click(196, 600)

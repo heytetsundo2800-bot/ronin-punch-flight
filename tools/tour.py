@@ -13,7 +13,7 @@ async def main():
         pg.on('pageerror', lambda e: logs.append('PAGEERROR: ' + str(e)))
         pg.on('console', lambda m: logs.append(m.type + ': ' + m.text) if m.type == 'error' else None)
         mode = sys.argv[1] if len(sys.argv) > 1 else 'scramble'
-        await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テツンド', tutorial:true, char:'%s', mode:'%s', diff:'normal', stage:'sakura'}))" % (sys.argv[2] if len(sys.argv) > 2 else 'tora', mode))
+        await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テツンド', tutorial:true, seenRules:{scramble:1,flag:1,ball:1}, char:'%s', mode:'%s', diff:'normal', stage:'sakura'}))" % (sys.argv[2] if len(sys.argv) > 2 else 'tora', mode))
         await pg.goto('http://localhost:8812/')
         await pg.wait_for_timeout(2000)
         await pg.screenshot(path=f'{OUT}/a_title.png')

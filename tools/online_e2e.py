@@ -17,7 +17,7 @@ def check(name, ok, info=''):
 
 async def dev(b, name, char, extra=''):
     ctx = await b.new_context(viewport={'width': 393, 'height': 852}, is_mobile=True, has_touch=True)
-    save = {'name': name, 'tutorial': True, 'char': char, 'mode': MODE, 'diff': 'easy', 'stage': STAGE}
+    save = {'name': name, 'tutorial': True, 'seenRules': {'scramble': 1, 'flag': 1, 'ball': 1}, 'char': char, 'mode': MODE, 'diff': 'easy', 'stage': STAGE}
     await ctx.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify(%s)); window.__rpfNetDebug = true;" % json.dumps(save, ensure_ascii=False))
     pg = await ctx.new_page()
     pg.errs = []

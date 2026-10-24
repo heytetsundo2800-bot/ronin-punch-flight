@@ -35,6 +35,17 @@ async def main():
         await pg.screenshot(path=f'{OUT}/04_home.png')
         if SCEN == 'battle':
             await pg.click('.battlebtn', force=True)
+            # v1.7：はじめての試合の前にはルールの説明が出る →「わかった！バトルへ」
+            try:
+                go = await pg.wait_for_selector('.modal.rules .go', timeout=20000)
+            except Exception:
+                go = None
+                print('rules modal did not appear')
+            if go:
+                await pg.screenshot(path=f'{OUT}/04b_rules.png')
+                # 3Dを描くテスト用のブラウザはとても遅いので、押せるまで長めに待つ
+                await go.click(timeout=90000)
+                print('rules modal: pressed わかった！バトルへ')
         await pg.wait_for_timeout(1500)
         await pg.screenshot(path=f'{OUT}/05_intro.png')
         await pg.wait_for_timeout(3500)

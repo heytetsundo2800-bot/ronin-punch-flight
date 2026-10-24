@@ -24,7 +24,7 @@ async def main():
         b = await p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
         ctx = await b.new_context(viewport={'width': 402, 'height': 874}, is_mobile=True, has_touch=True)
         own = '{' + ','.join(f'{i}:1' for i in IDS) + '}'
-        await ctx.add_init_script("localStorage.setItem('rpf_noacct', '1'); localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'even', mode:'scramble', diff:'normal', stage:'sakura', rp: 100, om:" + own + "}));")
+        await ctx.add_init_script("localStorage.setItem('rpf_noacct', '1'); localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, seenRules:{scramble:1,flag:1,ball:1}, char:'even', mode:'scramble', diff:'normal', stage:'sakura', rp: 100, om:" + own + "}));")
         pg = await ctx.new_page()
         errs = []
         pg.on('pageerror', lambda e: errs.append('PE ' + str(e)))

@@ -13,7 +13,7 @@ async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
         ctx = await b.new_context(viewport={'width': 402, 'height': 874}, device_scale_factor=1, is_mobile=True, has_touch=True)
-        await ctx.add_init_script("localStorage.setItem('rpf_noacct', '1'); localStorage.setItem('rpf_save_v1', JSON.stringify({name:'てつんど', tutorial:true, char:'aomachi', mode:'scramble', diff:'normal', stage:'campus', rp: 140}));")
+        await ctx.add_init_script("localStorage.setItem('rpf_noacct', '1'); localStorage.setItem('rpf_save_v1', JSON.stringify({name:'てつんど', tutorial:true, seenRules:{scramble:1,flag:1,ball:1}, char:'aomachi', mode:'scramble', diff:'normal', stage:'campus', rp: 140}));")
         pg = await ctx.new_page()
         errs = []
         pg.on('pageerror', lambda e: errs.append(str(e)))

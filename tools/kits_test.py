@@ -13,7 +13,7 @@ async def start(b, me, friends, mode='scramble', sim=6, logs=None):
     pg = await ctx.new_page()
     pg.on('pageerror', lambda e: logs.append('PAGEERROR: ' + str(e)))
     pg.on('console', lambda m: logs.append(m.type + ': ' + m.text) if m.type == 'error' and '404' not in m.text and 'Failed to load' not in m.text else None)
-    await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, char:'%s', mode:'%s', diff:'hard', stage:'sakura'}))" % (me, mode))
+    await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テスト', tutorial:true, seenRules:{scramble:1,flag:1,ball:1}, char:'%s', mode:'%s', diff:'hard', stage:'sakura'}))" % (me, mode))
     await pg.goto(URL)
     await pg.wait_for_timeout(1200)
     await pg.mouse.click(196, 600)

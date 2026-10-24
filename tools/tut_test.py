@@ -84,19 +84,11 @@ async def main():
         await pg.evaluate('() => { const m = window.__app.match, p = m.player; const g = m.guardians[p.team]; p.pos.copy(g.pos).add({x:0,y:0,z:7}); p.vel.set(0,0,0); }')
         await pg.wait_for_timeout(600)
         await pg.screenshot(path=f'{OUT}/tut_03.png')
-        try:
-            dep = await pg.wait_for_selector('.depbtn:not(.hidden)', timeout=6000)
-        except Exception:
-            dep = None
-            print('deposit button did not appear')
-        if dep:
-            bb = await dep.bounding_box()
-            cdp = await ctx.new_cdp_session(pg)
-            await cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': bb['x'] + 30, 'y': bb['y'] + 30, 'id': 0}]})
-            for _ in range(20):
-                await pg.wait_for_timeout(300)
-                if await pg.evaluate('() => window.__app.match.step >= 8'): break
-            await cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+        # v1.7：預けるのは自動（ボタンは押さない）。ダルマの近くにいるだけで次へ進む
+        for _ in range(20):
+            if await pg.evaluate('() => window.__app.match.step >= 8'): break
+            await pg.wait_for_timeout(300)
+        print('auto deposit done:', await pg.evaluate('() => window.__app.match.step >= 8'))
         log.append(await step())
         print('after deposit:', log[-1])
         await pg.wait_for_timeout(1500)

@@ -6,7 +6,7 @@ async def shot_mode(b, mode, char):
     ctx = await b.new_context(viewport={'width': 393, 'height': 852}, device_scale_factor=2, is_mobile=True, has_touch=True)
     pg = await ctx.new_page()
     pg.on('pageerror', lambda e: print('PAGEERROR', e))
-    await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テツンド', tutorial:true, char:'%s', mode:'%s', diff:'normal', stage:'sakura'}))" % (char, mode))
+    await pg.add_init_script("localStorage.setItem('rpf_save_v1', JSON.stringify({name:'テツンド', tutorial:true, seenRules:{scramble:1,flag:1,ball:1}, char:'%s', mode:'%s', diff:'normal', stage:'sakura'}))" % (char, mode))
     await pg.goto('http://localhost:8812/')
     await pg.wait_for_timeout(1500)
     await pg.mouse.click(196, 600)
