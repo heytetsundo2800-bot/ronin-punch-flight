@@ -924,6 +924,12 @@ async function clientContract(base, F, refsTo) {
   // ブラウザのかわり：相対 URL を devserver に向けて、端末ごとの IP をつける
   globalThis.fetch = (u, o = {}) => realFetch(new URL(String(u), base), { ...o, headers: { ...(o.headers || {}), 'x-forwarded-for': curIp } });
   globalThis.location = new URL(base + '/');
+  // ブラウザのかわり：この端末に保存できる（localStorage がある）ことにする。
+  // ないと net.js は「保存できない端末（プライベートブラウズなど）」とみなして、自動でアカウントを作らない
+  if (typeof globalThis.window === 'undefined') {
+    const d = {};
+    globalThis.window = { localStorage: { getItem: (k) => (k in d ? d[k] : null), setItem: (k, v) => { d[k] = String(v); }, removeItem: (k) => { delete d[k]; } }, addEventListener: () => {} };
+  }
   const url = (f) => pathToFileURL(path.join(SRC, f)).href;
   const util = await import(url('util.js'));
   const saveMod = await import(url('save.js'));
