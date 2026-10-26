@@ -1,6 +1,6 @@
 // 遊びごこちの数字（ここを変えると操作感がかわる）
-export const VERSION = '1.7.0';
-export const BUILD = '2026-10-24';
+export const VERSION = '1.7.1';
+export const BUILD = '2026-10-27';
 
 export const MATCH_TIME = 180; // 3分
 export const RESPAWN_TIME = 5; // 復活までの秒数
