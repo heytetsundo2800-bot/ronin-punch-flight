@@ -16,11 +16,15 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(e.request)
         .then((r) => {
-          const c = r.clone();
-          caches.open(CACHE).then((ca) => ca.put('/index.html', c));
+          // 入口ごとにキャッシュ（/icon10/ などは、アイコンだけがちがう入口）
+          const key = u.pathname === '/' || u.pathname === '/index.html' ? '/index.html' : u.pathname.replace(/index\.html$/, '');
+          if (r.ok) {
+            const c = r.clone();
+            caches.open(CACHE).then((ca) => ca.put(key, c));
+          }
           return r;
         })
-        .catch(() => caches.match('/index.html'))
+        .catch(() => caches.match(u.pathname === '/' ? '/index.html' : u.pathname.replace(/index\.html$/, '')).then((hit) => hit || caches.match('/index.html')))
     );
     return;
   }
