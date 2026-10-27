@@ -20,13 +20,38 @@ import { net } from './net.js';
 import { Room } from './room.js';
 import { HostMatch, ClientMatch } from './netmatch.js';
 import { rtcSupported } from './rtc.js';
-import { el, $, $$, store, escapeHtml, isIOS, isLINE, isInApp, isStandalone, hasTouch, clamp, damp } from './util.js';
+import { el, $, $$, store, escapeHtml, isIOS, isAndroid, isLINE, isInApp, isStandalone, hasTouch, clamp, damp, vibrate } from './util.js';
 import { PAIRS, MACHIDA } from './kits.js';
 import { toon, addOutline, disposeDeep, setOutlineViewport, shadowTex } from './gfx.js';
 import { Post, GRADES } from './post.js';
 import { buildLobbyArt, LOBBY_GROUND } from './lobbyart.js';
 
 const MODE_KEYS = ['scramble', 'flag', 'ball'];
+// v1.8：スマホのブラウザで開いている（ホーム画面のアプリではない）ときだけ、アプリにする方法を出す
+const canInstallHint = () => !isStandalone() && (isIOS || isAndroid);
+// LINEなどの中のブラウザから、Safari・Chrome で開きなおすリンク
+const externalUrl = () => {
+  try {
+    const u = new URL(location.href);
+    u.hash = '';
+    u.searchParams.set('openExternalBrowser', '1');
+    return u.toString();
+  } catch (e) {
+    return location.origin + '/?openExternalBrowser=1';
+  }
+};
+// v1.8：フレンドのようすの言葉
+const FRIEND_STATE = { menu: 'オンライン', room: '部屋にいる', match: '対戦中', off: 'オフライン' };
+// v1.8：下のタブ（[画面, アイコン, 名前]）
+const TAB_DEFS = [
+  ['char', 'fighter', 'パンチャー'],
+  ['om', 'disc', 'ディスク'],
+  ['home', 'home', 'ホーム'],
+  ['rank', 'rank', 'ランキング'],
+  ['set', 'gear', 'せってい'],
+];
+// v1.8：オンラインの部屋の試合のあと、結果を見せてから部屋の待ち画面にもどるまでの秒数
+const ROOM_BACK_S = 15;
 
 
 // まだ作っていない絵のかわり（とうめいな1ドット）
@@ -107,6 +132,7 @@ class App {
     this.input = new Input($('#touch'), null, null);
     this.applySettings();
     this.initLobby();
+    this.buildTabBar();
     this.bindGlobal();
     this.frameTimes = [];
     this.noRender = /[?&]norender=1/.test(location.search); // 自動テスト用：描かずに動かす
@@ -206,6 +232,12 @@ class App {
   }
 
   bindGlobal() {
+    // v1.8：Android の Chrome は、ボタン1つでアプリにできる（あとで「アプリにする方法」の中のボタンで使う）
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      this.installEvt = e;
+    });
+    window.addEventListener('appinstalled', () => (this.installEvt = null));
     // 最初のタッチで音を出せるようにする
     const unlock = () => sound.unlock();
     window.addEventListener('pointerdown', unlock, { passive: true });
@@ -393,8 +425,8 @@ class App {
     L.dwT = (L.dwT || 0) - dt;
     if (!L.dw || L.dwT <= 0) {
       L.dwT = 0.5;
-      const H = this.viewH;
-      let top = H * 0.07, bot = H * 0.27;
+      const H = this.viewH, W = this.viewW;
+      let top = H * 0.07, bot = H * 0.27, left = 0, right = W;
       const scr = document.querySelector('.screen.discsel');
       const hd = scr && scr.querySelector('.hdr'), st = scr && scr.querySelector('.discstage'), inf = scr && scr.querySelector('.dsinfo');
       if (hd && st) {
@@ -402,8 +434,14 @@ class App {
         const ri = inf ? inf.getBoundingClientRect() : null;
         top = rh.bottom + 4;
         bot = ri && ri.height > 10 ? ri.top - 2 : rs.bottom - 74;
+        // v1.8：右はしにセット中の列があるので、モンスターはその左のまん中に
+        const dc = scr.querySelector('.deckcol');
+        if (dc) {
+          left = Math.max(0, rs.left);
+          right = Math.min(W, dc.getBoundingClientRect().left - 4);
+        }
       }
-      L.dw = { top, bot: Math.max(bot, top + 60) };
+      L.dw = { top, bot: Math.max(bot, top + 60), left, right: Math.max(right, left + 80) };
     }
     return L.dw;
   }
@@ -617,9 +655,12 @@ class App {
       const E = 0.3; // モンスターを見上げる角度（約17度）。カメラをモンスターより下に置く＝うしろは地平線の白っぽい所ではなく、青い空
       // 見上げているので、奥行きも少し高さに見える
       const hp = F.h * Math.cos(E) + F.d * Math.sin(E);
-      // 高さと横はばの両方が窓に入る距離（1周のポーズでいちばん大きいとき）
-      dist = Math.max(6, (hp * H) / (0.92 * hpx * 2 * tf), F.w / (0.86 * 2 * tf * (W / H)));
-      ox = F.cx || 0;
+      // 高さと横はばの両方が窓に入る距離（1周のポーズでいちばん大きいとき）。横は窓のはば（v1.8：セット中の列の左）
+      const wpx = Math.max(80, (R.right == null ? W : R.right) - (R.left || 0));
+      dist = Math.max(6, (hp * H) / (0.92 * hpx * 2 * tf), F.w / (0.86 * 2 * tf * (wpx / H)));
+      // 窓のまん中が画面のまん中より左にあるぶん、カメラを右へ（モンスターが窓のまん中に見える）
+      const xc = ((R.left || 0) + (R.right == null ? W : R.right)) / 2;
+      ox = (F.cx || 0) + ((W / 2 - xc) * 2 * dist * tf) / H;
       // 画面のまん中から窓のまん中までの角度（上がプラス）
       const a = Math.atan((0.5 - (R.top + R.bot) / 2 / H) * 2 * tf);
       camY = 0.7 + F.cy - dist * Math.tan(E);
@@ -649,13 +690,130 @@ class App {
   }
 
   // ===== 画面の部品 =====
-  setScreen(html, cls) {
+  // tab：下のタブを出す画面なら 'home' | 'char' | 'om' | 'rank' | 'set'
+  setScreen(html, cls, tab) {
     this.screenEl.innerHTML = '';
     if (this.lobby) this.lobby.view = (cls || '').includes('charsel') ? 'chars' : (cls || '').includes('discsel') ? 'disc' : 'home';
-    const s = el('div', 'screen ' + (cls || ''), html);
+    const s = el('div', 'screen ' + (cls || '') + (tab ? ' hastabs' : ''), html);
     this.screenEl.appendChild(s);
     this.backHandler = null;
+    this.setTabBar(tab || null);
     return s;
+  }
+  // 試合などで画面を消すとき（タブもかくす）
+  clearScreen() {
+    this.screenEl.innerHTML = '';
+    this.setTabBar(null);
+  }
+
+  // ===== v1.8：下のタブ =====
+  // 画面のいちばん下にくっつけて、ホーム・パンチャー・ディスク・ランキング・せっていで出したままにする。
+  // LINE のタブと同じように、押したまま横にすべらせると選ぶタブが指についてきて、はなすとそのタブに移る。
+  buildTabBar() {
+    const bar = el(
+      'nav',
+      'tabs navbar hidden',
+      '<i class="ind" aria-hidden="true"></i>' + TAB_DEFS.map(([t, ic, nm]) => `<button data-t="${t}" aria-label="${nm}"><span class="i">${ICON[ic]}</span><span class="tl">${nm}</span></button>`).join('')
+    );
+    this.root.appendChild(bar);
+    this.tabBar = bar;
+    this.tabCur = null;
+    const btns = $$('button', bar);
+    const N = btns.length;
+    // 指の位置 → 何番目のタブか（小数。0〜N-1）
+    const posAt = (x) => {
+      const a = btns[0].getBoundingClientRect(), b = btns[N - 1].getBoundingClientRect();
+      const w = (b.right - a.left) / N;
+      return clamp((x - a.left) / w - 0.5, 0, N - 1);
+    };
+    let drag = null; // {id, pos, idx, y0}
+    const hover = (i) => btns.forEach((b, k) => b.classList.toggle('hov', k === i));
+    const finish = (go) => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      bar.classList.remove('drag');
+      hover(-1);
+      const t = btns[d.idx].dataset.t;
+      if (go && t !== this.tabCur) this.goTab(t);
+      else this.placeTabInd(this.tabCur, true);
+    };
+    bar.addEventListener('pointerdown', (e) => {
+      if (drag || bar.classList.contains('hidden')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const pos = posAt(e.clientX);
+      drag = { id: e.pointerId, pos, idx: Math.round(pos), top: bar.getBoundingClientRect().top };
+      try {
+        bar.setPointerCapture(e.pointerId);
+      } catch (er) {}
+      bar.classList.add('drag');
+      hover(drag.idx);
+      bar.style.setProperty('--tx', pos.toFixed(3));
+    });
+    bar.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const pos = posAt(e.clientX);
+      drag.pos = pos;
+      bar.style.setProperty('--tx', pos.toFixed(3));
+      const i = Math.round(pos);
+      if (i !== drag.idx) {
+        drag.idx = i;
+        hover(i);
+        vibrate(6);
+      }
+      // 上に大きく指をはなしていったら、やめる（iPhone のタブと同じ）
+      bar.classList.toggle('off', e.clientY < drag.top - 70);
+    });
+    bar.addEventListener('pointerup', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const cancel = e.clientY < drag.top - 70;
+      bar.classList.remove('off');
+      this._tabUp = performance.now();
+      if (!cancel) sound.play('ui');
+      finish(!cancel);
+    });
+    bar.addEventListener('pointercancel', () => {
+      bar.classList.remove('off');
+      finish(false);
+    });
+    // キーボードや、プログラムからの click() でも動くように（指で押したときは pointerup で動いているので二重にしない）
+    btns.forEach(
+      (b) =>
+        (b.onclick = () => {
+          if (performance.now() - (this._tabUp || -1e9) < 600) return;
+          sound.play('ui');
+          if (b.dataset.t !== this.tabCur) this.goTab(b.dataset.t);
+        })
+    );
+  }
+  goTab(t) {
+    if (t === 'char') this.showChars();
+    else if (t === 'om') this.showOmamori();
+    else if (t === 'rank') this.showRanking();
+    else if (t === 'set') this.showSettings();
+    else this.showHome();
+  }
+  setTabBar(tab) {
+    const bar = this.tabBar;
+    if (!bar) return;
+    const wasOn = !bar.classList.contains('hidden');
+    this.tabCur = tab;
+    bar.classList.toggle('hidden', !tab);
+    if (!tab) return;
+    $$('button', bar).forEach((b) => b.classList.toggle('on', b.dataset.t === tab));
+    this.placeTabInd(tab, wasOn);
+  }
+  // 黄色いしるしを、そのタブの位置へ（anim：すべらせて動かす）
+  placeTabInd(tab, anim) {
+    const bar = this.tabBar;
+    if (!bar || !tab) return;
+    const i = TAB_DEFS.findIndex((d) => d[0] === tab);
+    if (!anim) bar.classList.add('noanim');
+    bar.style.setProperty('--tx', String(Math.max(0, i)));
+    if (!anim) {
+      void bar.offsetWidth;
+      bar.classList.remove('noanim');
+    }
   }
   toast(msg, ms = 2200) {
     const t = el('div', 'toast', msg);
@@ -733,8 +891,20 @@ class App {
       'title'
     );
     if (isLINE) {
-      const b = el('div', 'lineopen', 'LINEの中のブラウザだと音が出なかったり、ホーム画面に追加できません。<br><a href="' + location.href.split('#')[0] + (location.search ? '&' : '?') + 'openExternalBrowser=1">Safari・Chromeで開く</a>');
+      const b = el('div', 'lineopen', 'LINEの中のブラウザだと音が出なかったり、ホーム画面に追加できません。<br><a href="' + externalUrl() + '">Safari・Chromeで開く</a>');
       s.appendChild(b);
+    }
+    // v1.8：ブラウザで開いている人には「アプリにする方法」（LINEで送られてきたリンクから、アプリにするまで）
+    if (canInstallHint()) {
+      const a = el('button', 'a2btn', `${ICON.install}<span><b>アプリにする方法</b><small>ホーム画面に追加すると、画面が広くなるよ</small></span>`);
+      a.setAttribute('aria-label', 'アプリにする方法');
+      a.onclick = (e) => {
+        e.stopPropagation();
+        sound.unlock();
+        sound.play('ui');
+        this.showA2HS();
+      };
+      s.appendChild(a);
     }
     const go = () => {
       sound.unlock();
@@ -744,7 +914,8 @@ class App {
       else this.showHome();
     };
     s.addEventListener('click', (e) => {
-      if (e.target.closest('a')) return;
+      if (e.target.closest('a, .a2btn')) return;
+      if (this.root.querySelector('.modal')) return;
       go();
     });
   }
@@ -854,7 +1025,7 @@ class App {
       `<div class="topbar">
          <div class="plate"><div class="rankbadge">${rk.key}</div><div style="min-width:0"><div class="nm">${escapeHtml(S.name || 'プレイヤー')}</div><div class="rp">ランク ${S.rp}pt${rk.next ? ' / 次 ' + rk.next : ''}</div><div class="rpbar"><i style="width:${prog}%"></i></div></div></div>
          <div style="flex:1"></div>
-         ${isIOS && !isStandalone() && !isInApp ? `<button class="iconbtn a2hs" aria-label="アプリにする">${ICON.install}</button>` : ''}
+         ${canInstallHint() ? `<button class="iconbtn a2hs" aria-label="アプリにする">${ICON.install}</button>` : ''}
          <button class="iconbtn help" aria-label="遊び方">${ICON.help}</button>
          <button class="iconbtn share" aria-label="友だちに送る">${ICON.share}</button>
        </div>
@@ -868,17 +1039,11 @@ class App {
        <button class="battlebtn"><span class="en">BATTLE</span><span class="jp">バトル</span></button>
        <div class="subbtns">
          <button class="trainbtn">${ICON.target}<b>訓練場</b><small>自由に練習</small></button>
-         <button class="onlinebtn">${ICON.online}<b>オンライン対戦</b><small>LINEで招待</small></button>
+         <button class="onlinebtn">${ICON.online}<b>オンライン対戦</b><small class="onlsub">LINEで招待</small></button>
        </div>
        <div class="homechar"><span class="en">${escapeHtml(def.en)}</span><div class="nm">${escapeHtml(def.name)}</div><div class="tp">${def.typeName}・${def.elemLabel || ELEM[def.elem].name}</div></div>
-       <div style="flex:1"></div>
-       <div class="tabs">
-         <button data-t="char"><span class="i">${ICON.fighter}</span>パンチャー</button>
-         <button data-t="om"><span class="i">${ICON.disc}</span>ディスク</button>
-         <button data-t="home" class="on"><span class="i">${ICON.home}</span>ホーム</button>
-         <button data-t="rank"><span class="i">${ICON.rank}</span>ランキング</button>
-         <button data-t="set"><span class="i">${ICON.gear}</span>せってい</button>
-       </div>`,
+       <div style="flex:1"></div>`,
+      'home',
       'home'
     );
     const nm = $('.rule .nm', s), sub = $('.sub', s);
@@ -934,6 +1099,9 @@ class App {
       sound.play('ui');
       this.startTraining();
     };
+    this.updateOnlineBits();
+    this.showNextInvite();
+    net.pokeIfStale();
     $('.onlinebtn', s).onclick = () => {
       sound.play('ui');
       this.showOnline();
@@ -950,41 +1118,78 @@ class App {
     });
     if ($('.a2hs', s)) $('.a2hs', s).onclick = () => this.showA2HS();
     // はじめての人には一度だけ「アプリにする」をすすめる
-    if (isIOS && !isStandalone() && !isInApp && S.plays >= 1 && !store.get('rpf_a2hs_shown', false)) {
+    if (canInstallHint() && S.plays >= 1 && !store.get('rpf_a2hs_shown', false)) {
       store.set('rpf_a2hs_shown', true);
-      setTimeout(() => this.showA2HS(), 600);
+      setTimeout(() => s.isConnected && !this.root.querySelector('.modal') && this.showA2HS(), 600);
     }
-    $$('.tabs button', s).forEach((b) => (b.onclick = () => {
-      sound.play('ui');
-      const t = b.dataset.t;
-      if (t === 'char') this.showChars();
-      else if (t === 'om') this.showOmamori();
-      else if (t === 'rank') this.showRanking();
-      else if (t === 'set') this.showSettings();
-    }));
   }
 
+  // v1.8：アプリにする（ホーム画面に追加）方法。LINEで送られてきたリンクを開いたところから
   showA2HS() {
+    const ext = externalUrl();
+    const inApp = isInApp;
+    const ios = [
+      ['画面の右下の「…」を押す', `iOS 18 までは、画面の下の <span class="inico">${ICON.iosShare}</span> 共有ボタン（四角から矢印が出ているマーク）`],
+      ['「共有」を押す', 'iOS 18 までは、この手順はなし'],
+      ['「その他」→「ホーム画面に追加」を押す', '見つからなければ、上にスクロール'],
+      ['「Webアプリとして開く」がオンなのをたしかめて、右上の「追加」', ''],
+      ['ホーム画面にできた「浪人パンチ」のアイコンから開く！', ''],
+    ];
+    const android = [
+      ['Chrome の右上の「⋮」を押す', ''],
+      ['「ホーム画面に追加」を押す', '「アプリをインストール」と出ていたら、そちらを押す'],
+      ['「インストール」（または「追加」）を押す', ''],
+      ['ホーム画面にできた「浪人パンチ」のアイコンから開く！', ''],
+    ];
+    const list = (rows) => `<ol class="a2list">${rows.map(([t, n], i) => `<li><b>${i + 1}</b><span>${t}${n ? `<small>${n}</small>` : ''}</span></li>`).join('')}</ol>`;
     const m = el(
       'div',
-      'modal',
-      `<div class="box"><h3>ホーム画面に追加すると<br>アプリみたいに遊べる！</h3>
-      <div class="ctrl" style="grid-template-columns:34px 1fr;gap:10px">
-        <b>1</b><span>Safari の下（または上）の <span class="inico">${ICON.iosShare}</span> 共有ボタン（四角から矢印が出ているマーク）を押す</span>
-        <b>2</b><span>「ホーム画面に追加」を押す（見つからなければ下にスクロール）</span>
-        <b>3</b><span>右上の「追加」を押す → ホーム画面のアイコンから起動！</span>
-      </div>
-      <p class="note" style="margin-top:10px">画面が広くなって、まちがって戻ったりしなくなります。<br>※Safari とホーム画面のアプリでは記録が別になります。アカウントの「引き継ぎコード」で移せます。</p>
-      <div class="btns"><button class="btn y close">わかった</button></div></div>`
+      'modal a2hsm',
+      `<div class="box"><h3>アプリにする<small>（ホーム画面に追加）</small></h3>
+        <p class="note">ホーム画面のアイコンから開くと、画面が広くなって、まちがって戻ったりしなくなるよ。</p>
+        ${inApp ? `<div class="a2line"><b>いまはLINEなどの中のブラウザで開いています</b><span>先に Safari（Androidは Chrome）で開いてから、下の手順へ。</span><a class="btn y small" href="${ext}">Safari・Chromeで開く</a><small>開かないときは、画面の右上か右下の「…」→「Safariで開く」（Androidは「ブラウザで開く」）</small></div>` : ''}
+        <div class="seg a2os"><button data-o="ios">iPhone</button><button data-o="android">Android</button></div>
+        <div class="a2steps"></div>
+        <p class="note a2note"></p>
+        <div class="btns">${this.installEvt ? '<button class="btn y inst">このボタンでアプリにする</button>' : ''}<button class="btn ${this.installEvt ? 'k' : 'y'} close">わかった</button></div></div>`
     );
     this.root.appendChild(m);
+    let os = isAndroid ? 'android' : 'ios';
+    const show = () => {
+      $$('.a2os button', m).forEach((b) => b.classList.toggle('on', b.dataset.o === os));
+      $('.a2steps', m).innerHTML = list(os === 'ios' ? ios : android);
+      $('.a2note', m).innerHTML =
+        os === 'ios'
+          ? '※iPhoneの Chrome で開いているときは、アドレスバーの右の共有ボタン →「ホーム画面に追加」。<br>※iPhoneは、Safari とホーム画面のアプリで記録が別になります。アプリにしてから遊びはじめると、記録がひとつにまとまるよ（あとからでも「せってい」→「アカウント」の引き継ぎコードで移せます）。'
+          : '※メニューに出てこないときは、Chrome を最新にしてね。';
+    };
+    $$('.a2os button', m).forEach((b) => (b.onclick = () => {
+      os = b.dataset.o;
+      sound.play('ui');
+      show();
+    }));
+    show();
     m.querySelector('.close').onclick = () => m.remove();
+    const inst = m.querySelector('.inst');
+    if (inst)
+      inst.onclick = async () => {
+        const ev = this.installEvt;
+        if (!ev) return;
+        this.installEvt = null;
+        try {
+          ev.prompt();
+          const r = await ev.userChoice;
+          if (r && r.outcome === 'accepted') this.toast('アプリにしました！ホーム画面のアイコンから開いてね', 3500);
+        } catch (e) {}
+        m.remove();
+      };
   }
   share() {
     const url = location.origin + '/?openExternalBrowser=1';
-    const text = '浪人パンチフライトで勝負しよう！4対4の空中バトル👊 ' + url;
+    const msg = '浪人パンチフライトで勝負しよう！4対4の空中バトル👊\n開いたら「アプリにする方法」を見て、ホーム画面に追加してね📲';
+    const text = msg + '\n' + url;
     if (navigator.share) {
-      navigator.share({ title: '浪人パンチフライト', text: '浪人パンチフライトで勝負しよう！4対4の空中バトル👊', url }).catch(() => {});
+      navigator.share({ title: '浪人パンチフライト', text: msg, url }).catch(() => {});
     } else {
       window.open('https://line.me/R/share?text=' + encodeURIComponent(text), '_blank');
     }
@@ -1154,7 +1359,8 @@ class App {
       return;
     }
     if (o.t === 'toLobby' && this.room && this.room.role === 'client') {
-      // ホストがロビーにもどった（結果を見ている人はそのまま）
+      // v1.8：ホストが部屋の待ち画面にもどった → 結果を見ている人も、あと数秒で自動でもどる
+      if (this._resSoon) this._resSoon(5, 'ホストが部屋にもどりました');
       return;
     }
     if (this.match && this.match.online && this.match.onMsg) this.match.onMsg(from, o);
@@ -1168,6 +1374,7 @@ class App {
     const s = this.setScreen(
       `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>オンライン対戦</h2></div>
        <div class="card roomcode"><div><div class="note">部屋コード</div><div class="code">${room.code}</div></div><div class="col"><button class="btn y small invite">LINEで招待</button><button class="btn k small copy">コピー</button></div></div>
+       <button class="btn wide finvbtn">${ICON.online}<span>フレンドを招待</span><small class="fonc"></small></button>
        <div class="card teams"><div class="tcol t0"><h4>青チーム</h4><div class="slots"></div></div><div class="tcol t1"><h4>赤チーム</h4><div class="slots"></div></div></div>
        <div class="card ropts"></div>
        <div class="card mychar"><h3>自分のキャラ<span class="hint">横にスクロールで18人</span></h3><div class="charrow">${PUNCHER_IDS.map((id) => `<button data-id="${id}" style="--e:${ELEM[PUNCHERS[id].elem].color}"><img alt="" ${this.porImg(id, 0)}><span>${escapeHtml(PUNCHERS[id].short || PUNCHERS[id].name)}</span></button>`).join('')}</div></div>
@@ -1198,6 +1405,10 @@ class App {
         this.toast('コピーできませんでした。コード ' + room.code + ' を伝えてね');
       }
     };
+    $('.finvbtn', s).onclick = () => {
+      sound.play('ui');
+      this.showInviteFriends();
+    };
     $$('.charrow button', s).forEach((b) => {
       b.onclick = () => {
         this.save.char = b.dataset.id;
@@ -1226,8 +1437,10 @@ class App {
         let h = '';
         for (let i = 0; i < 4; i++) {
           const m = ms[i];
+          // v1.8：まだ試合の結果を見ている人には「結果画面」と出す（スタートすると、その人も試合に入る）
+          const away = !!(m && m.res && m.id !== room.myId);
           if (m)
-            h += `<button class="rslot${m.id === room.myId ? ' me' : ''}" data-id="${escapeHtml(m.id)}"><img alt="" src="${this.portraits.get(PUNCHERS[m.char] ? m.char : 'tora', t)}"><span class="nm">${escapeHtml(m.name)}</span>${m.host ? '<i class="tag">ホスト</i>' : m.ping ? `<i class="ping">${m.ping}ms</i>` : ''}</button>`;
+            h += `<button class="rslot${m.id === room.myId ? ' me' : ''}${away ? ' away' : ''}" data-id="${escapeHtml(m.id)}"><img alt="" src="${this.portraits.get(PUNCHERS[m.char] ? m.char : 'tora', t)}"><span class="nm">${escapeHtml(m.name)}${away ? '<small class="aw">結果画面</small>' : ''}</span>${m.host ? '<i class="tag">ホスト</i>' : m.ping && !away ? `<i class="ping">${m.ping}ms</i>` : ''}</button>`;
           else h += `<div class="rslot empty">${st.fill ? 'CPU' : '－'}</div>`;
         }
         box.innerHTML = h;
@@ -1274,12 +1487,162 @@ class App {
     };
     this.renderRoom = render;
     render();
+    this.updateOnlineBits();
+    net.pokePresence();
+    this.showNextInvite();
+  }
+
+  // ===== v1.8：フレンドのオンライン表示と招待 =====
+  // net.js が「いるよ」を送るときに聞く：いまの状態
+  presenceState() {
+    if (this.match && this.match.phase !== 'result') return 'match';
+    if (this.room) return 'room';
+    return 'menu';
+  }
+  // フレンドのようすもほしいか（部屋・フレンドのタブ・招待の一覧を見ているとき。ホームでは2回に1回）
+  wantFriends(n) {
+    if (this.root.querySelector('.modal.finvm')) return true;
+    const sc = this.screenEl.querySelector('.screen');
+    if (!sc) return false;
+    if (sc.classList.contains('room') || sc.querySelector('.fcard')) return true;
+    if (sc.classList.contains('home')) return n % 2 === 1;
+    return false;
+  }
+  onPresence() {
+    this.updateOnlineBits();
+    if (this._finvRender) this._finvRender();
+  }
+  // ホームの「オンライン対戦」・部屋の「フレンドを招待」・フレンドのタブの点
+  updateOnlineBits() {
+    const n = net.onlineFriends();
+    const sub = this.screenEl.querySelector('.home .onlsub');
+    if (sub) {
+      sub.textContent = n > 0 ? 'フレンド ' + n + '人がオンライン' : 'LINEで招待';
+      sub.classList.toggle('lit', n > 0);
+    }
+    const c = this.screenEl.querySelector('.room .fonc');
+    if (c) c.textContent = n > 0 ? 'オンライン ' + n + '人' : '';
+    this.screenEl.querySelectorAll('.rkrow[data-u] .fst').forEach((d) => {
+      const u = d.closest('.rkrow').dataset.u;
+      const st = u ? net.friendState(u) : null;
+      d.className = 'fst ' + (st || 'off');
+      d.textContent = FRIEND_STATE[st || 'off'];
+    });
+  }
+  // 部屋に入っているとき：フレンドの一覧から招待を送る
+  async showInviteFriends() {
+    if (this.root.querySelector('.modal.finvm')) return;
+    const m = el('div', 'modal finvm', `<div class="box"><h3>フレンドを招待</h3><div class="flist"><p class="note">読みこみ中…</p></div><p class="note">オンラインのフレンドに「参加する」ボタンつきで届きます（2分で消えます）。</p><div class="btns"><button class="btn k close">とじる</button></div></div>`);
+    this.root.appendChild(m);
+    const close = () => {
+      m.remove();
+      this._finvRender = null;
+    };
+    m.querySelector('.close').onclick = close;
+    const list = $('.flist', m);
+    if (!net.acct) {
+      list.innerHTML = '<p>フレンドを使うにはアカウントが必要です。</p><p class="note">「せってい」→「アカウント」で作れます。</p>';
+      return;
+    }
+    net.pokePresence();
+    let friends = [];
+    try {
+      friends = await net.friends();
+    } catch (e) {}
+    if (!m.isConnected) return;
+    if (!friends.length) {
+      list.innerHTML = '<p>まだフレンドがいません。</p><p class="note">「ランキング」→「フレンド」で、フレンドコードをコピーして送るか、友だちのコードを入れてね。</p>';
+      return;
+    }
+    const sent = this._invSent || (this._invSent = {});
+    const order = { menu: 0, room: 1, match: 2, off: 3 };
+    const render = () => {
+      if (!m.isConnected) return;
+      const rows = friends
+        .map((f) => ({ ...f, st: net.friendState(f.u) || 'off' }))
+        .sort((a, b) => order[a.st] - order[b.st] || a.n.localeCompare(b.n, 'ja'));
+      const code = this.room ? this.room.code : '';
+      list.innerHTML = rows
+        .map((f) => {
+          const wait = sent[f.u] && Date.now() - sent[f.u] < 20000;
+          const lbl = f.st === 'off' ? 'オフライン' : wait ? '送った' : '招待';
+          return `<div class="frow ${f.st}"><img alt="" ${this.porImg(PUNCHERS[f.c] ? f.c : 'tora', 0)}><span class="nm">${escapeHtml(f.n)}<small class="fst ${f.st}">${FRIEND_STATE[f.st]}</small></span><button class="btn small ${f.st === 'off' || wait ? 'k' : 'y'} send" data-u="${escapeHtml(f.u)}" ${f.st === 'off' || wait || !code ? 'disabled' : ''}>${lbl}</button></div>`;
+        })
+        .join('');
+      this.fillImgs(list);
+      $$('.send', list).forEach((b) => {
+        b.onclick = async () => {
+          if (!this.room) return;
+          const u = b.dataset.u;
+          b.disabled = true;
+          sound.play('ui');
+          const r = await net.inviteFriend(u, this.room.code);
+          const f = friends.find((x) => x.u === u);
+          if (r && r.ok) {
+            sent[u] = Date.now();
+            this.toast(escapeHtml(f ? f.n : 'フレンド') + ' さんに招待を送りました');
+            setTimeout(render, 20100);
+          } else this.toast(r && r.err === 'rl' ? '招待の送りすぎです。少し待ってね' : r && r.err === 'notfriend' ? 'フレンドではなくなっています' : '送れませんでした');
+          render();
+        };
+      });
+    };
+    this._finvRender = render;
+    render();
+  }
+  // 招待が届いた（試合中なら、終わってから見せる）
+  onInvites(list) {
+    const q = this.invQ || (this.invQ = []);
+    for (const iv of list) {
+      if (!iv || typeof iv.r !== 'string') continue;
+      const i = q.findIndex((x) => x.u === iv.u);
+      if (i >= 0) q.splice(i, 1);
+      q.push({ ...iv, rt: Date.now() });
+    }
+    this.showNextInvite();
+  }
+  showNextInvite() {
+    const q = this.invQ;
+    if (!q || !q.length) return;
+    const M = this.match;
+    if (M && M.phase !== 'result' && !M.isTraining && !M.isTutorial) return; // 試合が終わってから
+    if (this.root.querySelector('.modal')) return; // ほかの画面を見ているあいだは待つ（12秒ごとにまた見る）
+    // 古いもの・今いる部屋の招待はすてる
+    while (q.length && (Date.now() - q[q.length - 1].rt > 100000 || (this.room && this.room.code === q[q.length - 1].r))) q.pop();
+    const iv = q.pop();
+    if (!iv) return;
+    q.length = 0; // いちばん新しい1つだけ見せる
+    sound.play('pickup');
+    const m = el(
+      'div',
+      'modal invm',
+      `<div class="box"><div class="invhd"><img alt="" src="${this.portraits.get(PUNCHERS[iv.c] ? iv.c : 'tora', 0)}"><div><small>部屋への招待</small><b>${escapeHtml(iv.n || 'フレンド')} さんから招待！</b><span>部屋 ${escapeHtml(iv.r)}</span></div></div>
+       <p class="note">いっしょに4対4で遊ぼう！${this.room ? (this.room.role === 'host' ? '<br>あなたの部屋はとじて（入っている人も外に出ます）、こちらに入ります。' : '<br>いまの部屋を出て、こちらに入ります。') : M ? '<br>練習をやめて、こちらに入ります。' : ''}</p>
+       <div class="btns"><button class="btn y join">参加する</button><button class="btn k later">あとで</button></div></div>`
+    );
+    this.root.appendChild(m);
+    const timer = setTimeout(() => m.isConnected && m.remove(), 90000);
+    m.querySelector('.later').onclick = () => {
+      clearTimeout(timer);
+      m.remove();
+    };
+    m.querySelector('.join').onclick = () => {
+      clearTimeout(timer);
+      m.remove();
+      sound.play('ui');
+      if (this.match) {
+        this.endMatch();
+        this.showHome();
+      }
+      this.joinRoomFlow(iv.r);
+    };
   }
   hostStart() {
     const room = this.room;
     if (!room || room.role !== 'host') return;
     room.inMatch = true;
     room.lock(true);
+    room.markAway();
     const cfg = { mode: room.state.mode, diff: room.state.diff, stage: resolveStage(room.state.stage), roster: room.buildRoster() };
     room.broadcast({ t: 'start', cfg });
     this.startOnline(cfg);
@@ -1296,7 +1659,7 @@ class App {
     room.inMatch = true;
     // まだ結果画面などのモーダルが出ていたら消す
     this.root.querySelectorAll('.modal').forEach((m) => m.remove());
-    this.screenEl.innerHTML = '';
+    this.clearScreen();
     this.renderRoom = null;
     this.paused = false;
     const opts = { mode: MODES[cfg.mode] ? cfg.mode : 'scramble', stage: STAGES[cfg.stage] ? cfg.stage : 'sakura', char: cfg.roster[meIdx].char, difficulty: diffKey(cfg.diff), playerName: this.save.name || 'プレイヤー', roster: cfg.roster, meIdx };
@@ -1304,15 +1667,20 @@ class App {
     this.match.resize(this.viewW, this.viewH);
     if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);
   }
+  // v1.8：試合が終わったら、同じ部屋の待ち画面にもどる（部屋は作りなおさない。ルール・ステージ・チームはここで変えられる）
   backToRoom() {
     this.endMatch();
     const room = this.room;
     if (!room) return this.showHome();
     room.inMatch = false;
+    const me = room.me();
+    if (me) me.res = false;
     if (room.role === 'host') {
       room.lock(false);
+      // 結果を見ている人にも「部屋にもどったよ」と知らせる（少ししたら自動でもどる）
+      room.broadcast({ t: 'toLobby' });
       room.pushLobby();
-    }
+    } else room.send({ t: 'back' });
     this.showRoom();
   }
 
@@ -1330,7 +1698,8 @@ class App {
        <div class="charview"></div>
        <div class="card info cinfo"></div>
        <button class="btn y wide pick">このキャラで戦う</button>`,
-      'panel charsel'
+      'panel charsel',
+      'char'
     );
     this.fillImgs(s, cur);
     s.style.background = 'linear-gradient(180deg, rgba(14,18,32,0.9) 0, rgba(14,18,32,0.0) 22%, rgba(14,18,32,0.0) 62%, rgba(14,18,32,0.9) 78%)';
@@ -1397,18 +1766,23 @@ class App {
   showOmamori() {
     const S = this.save;
     const charId = S.char;
-    let sel = null; // 一覧で選んだディスク（上の枠をタップすると入れかわる）
+    let sel = null; // 一覧で選んだディスク（そのあとセット中の枠をタップすると入る）
+    let slot = -1; // 先にタップしたセット中の枠（そのあと一覧のディスクをタップすると入る）
+    // v1.8：セット中の4枚は上の右はしにたて1列。のこりの高さは全部「持っているディスク」で、一覧だけがスクロールする
     const s = this.setScreen(
-      `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>ディスク<small>${escapeHtml(PUNCHERS[charId].short || PUNCHERS[charId].name)}</small></h2></div>
-       <div class="discstage"><div class="dsinfo"></div></div>
+      `<div class="dstop">
+         <div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>ディスク<small>${escapeHtml(PUNCHERS[charId].short || PUNCHERS[charId].name)}</small></h2></div>
+         <div class="discstage"><div class="dsinfo"></div></div>
+         <div class="deckcol"><div class="dclabel">セット中</div><div class="deck4 vert"></div></div>
+       </div>
        <div class="dsbody">
-         <div class="card deckcard"><h3>セット中<span class="hint">キャラの属性で始まる・下フリックで変える</span></h3><div class="deck4"></div></div>
-         <div class="card omdetail"></div>
-         <div class="card listcard"><h3>持っているディスク<span class="hint cnt"></span></h3><div class="omgrid"></div></div>
+         <div class="card listcard"><h3>持っているディスク<span class="hint cnt"></span></h3><p class="omhelp"></p><div class="omgrid"></div></div>
        </div>`,
-      'panel discsel'
+      'panel discsel v18',
+      'om'
     );
-    const deckEl = $('.deck4', s), grid = $('.omgrid', s), det = $('.omdetail', s), info = $('.dsinfo', s);
+    const deckEl = $('.deck4', s), grid = $('.omgrid', s), info = $('.dsinfo', s), help = $('.omhelp', s);
+    const det = null;
     const card = (id, extra = '') => {
       const o = OMAMORI[id];
       const owned = !!S.om[id];
@@ -1420,33 +1794,59 @@ class App {
       this.setLobbyMon(o.mon, id);
       const lv = omLevel(S, id);
       const owned = !!S.om[id];
-      info.innerHTML = `<span class="rr" style="--r:${RARE_COLOR[o.rare]}">${o.rare}</span><div class="mn">${escapeHtml(o.name)}</div><div class="mv"><i style="background:${KIND_COLOR[o.kind]}">${o.kind}</i>${escapeHtml(o.move)}</div>`;
-      det.innerHTML = `<div class="dtop"><b>${escapeHtml(o.move)}</b><span class="chips"><span style="--c:${ELEM[o.elem].color}">${ELEM[o.elem].name}</span><span style="--c:${KIND_COLOR[o.kind]}">${KIND_NAME[o.kind]}</span><span>待ち ${Math.round(o.cd * (1 - (lv - 1) * 0.04))}秒</span></span></div><p>${escapeHtml(o.desc)}</p><div class="note">${owned ? `Lv${lv}（効果 +${(lv - 1) * 8}%）・上フリックで発動、下フリックでこの属性に変わる` : 'まだ持っていません（勝つともらえるディスクパックから出ます）'}</div>`;
+      // 上の左：レア・名前・技・属性・説明（前は下の板にあった説明も、ここにまとめた）
+      info.innerHTML = `<div class="it"><span class="rr" style="--r:${RARE_COLOR[o.rare]}">${o.rare}</span><span class="lvb${owned ? '' : ' no'}">${owned ? 'Lv' + lv + (lv > 1 ? '（効果 +' + (lv - 1) * 8 + '%）' : '') : 'まだ持っていない'}</span></div>
+        <div class="mn">${escapeHtml(o.name)}</div>
+        <div class="mv"><i style="background:${KIND_COLOR[o.kind]}">${o.kind}</i><b>${escapeHtml(o.move)}</b></div>
+        <div class="chips"><span style="--c:${ELEM[o.elem].color}">${ELEM[o.elem].name}</span><span style="--c:${KIND_COLOR[o.kind]}">${KIND_NAME[o.kind]}</span><span>待ち ${Math.round(o.cd * (1 - (lv - 1) * 0.04))}秒</span></div>
+        <p class="ds">${escapeHtml(o.desc)}</p>`;
+      if (det) det.innerHTML = '';
+    };
+    // ディスクを枠に入れる（もうセット中なら、その枠と入れかえ）
+    const put = (id, i) => {
+      const d = S.decks[charId];
+      const j = d.indexOf(id);
+      if (j >= 0) d[j] = d[i];
+      d[i] = id;
+      saveSave(S);
+      sound.play('ui');
+      sel = null;
+      slot = -1;
+      render();
+      show(d[i]);
     };
     const render = () => {
       const deck = S.decks[charId];
-      deckEl.innerHTML = deck.map((id) => card(id, sel && sel === id ? 'sel' : '')).join('');
+      const want = sel && S.om[sel];
+      deckEl.innerHTML = deck.map((id, i) => card(id, (sel === id ? 'sel ' : '') + (slot === i ? 'slotsel ' : '') + (want ? 'drop' : ''))).join('');
       grid.innerHTML = OMAMORI_IDS.map((id) => card(id, (deck.includes(id) ? 'inuse ' : '') + (sel === id ? 'sel' : ''))).join('');
       this.fillImgs(s, sel && OMAMORI[sel] ? OMAMORI[sel].mon : null);
       $('.cnt', s).textContent = OMAMORI_IDS.filter((id) => S.om[id]).length + ' / ' + OMAMORI_IDS.length;
+      help.textContent = want
+        ? `「${OMAMORI[sel].name}」を入れる枠を、右上のセット中からタップ`
+        : slot >= 0
+          ? `セット中の${slot + 1}番目に入れるディスクをタップ`
+          : 'タップ → 右上の枠をタップで入れかえ（枠が先でもOK）';
+      // セット中の枠：ディスクを選んでいたら、そこへ入れる。選んでいなければ、この枠を「入れる場所」にする
       $$('.deck4 .omcard', s).forEach((b, i) => (b.onclick = () => {
-        if (sel && S.om[sel]) {
-          const d = S.decks[charId];
-          const j = d.indexOf(sel);
-          if (j >= 0) d[j] = d[i];
-          d[i] = sel;
-          saveSave(S);
-          sound.play('ui');
-          sel = null;
-          render();
-          show(d[i]);
-        } else {
-          show(deck[i]);
-          sound.play('ui');
+        if (want) {
+          put(sel, i);
+          return;
         }
+        slot = slot === i ? -1 : i;
+        sel = null;
+        show(S.decks[charId][i]);
+        render();
+        sound.play('ui');
       }));
+      // 持っているディスク：枠を先に選んでいたら、そこへ入れる
       $$('.omgrid .omcard', s).forEach((b) => (b.onclick = () => {
         const id = b.dataset.id;
+        if (slot >= 0 && S.om[id]) {
+          put(id, slot);
+          return;
+        }
+        slot = -1;
         sel = sel === id ? null : id;
         show(id);
         render();
@@ -1464,9 +1864,11 @@ class App {
     const s = this.setScreen(
       `<div class="hdr"><button class="back" aria-label="もどる">${ICON.back}</button><h2>ランキング</h2></div>
        <div class="seg rk"><button data-t="w">今週</button><button data-t="a">ランク</button><button data-t="f">フレンド</button></div>
+       ${tab === 'f' ? '<div class="card fcard"></div>' : ''}
        <div class="card list" style="flex:1;overflow-y:auto;margin-top:10px;touch-action:pan-y"><p class="note">読みこみ中…</p></div>
        <div class="card me"></div>`,
-      'panel'
+      'panel',
+      'rank'
     );
     s.querySelector('.seg').style.background = 'rgba(255,255,255,0.08)';
     $$('.rk button', s).forEach((b) => {
@@ -1476,6 +1878,16 @@ class App {
     $('.back', s).onclick = () => this.showHome();
     this.backHandler = () => this.showHome();
     const list = $('.list', s), me = $('.me', s);
+    // v1.8：フレンドのタブの上に「自分のコード（コピー）」と「友だちのコードで追加」
+    const fcard = $('.fcard', s);
+    if (fcard) {
+      if (net.acct) {
+        fcard.innerHTML = net.codeBarHtml() + '<div class="row fcrow"><button class="btn small y addf">友だちのコードで追加</button><button class="btn small k finv">LINEで送る</button></div>';
+        net.bindCodeBar(fcard);
+        $('.addf', fcard).onclick = () => net.addFriendModal(() => s.isConnected && this.showRanking('f'));
+        $('.finv', fcard).onclick = () => net.shareFriendLink();
+      } else fcard.innerHTML = '<p class="note">フレンドを使うにはアカウントが必要です（「せってい」→「アカウント」）。</p>';
+    }
     me.innerHTML = `<p class="note">今週のポイント：<b>${this.save.week.id === weekId() ? this.save.week.pt : 0}</b>　ランク：<b>${rankOf(this.save.rp).key}（${this.save.rp}pt）</b></p>`;
     const r = await net.ranking(tab);
     if (!r) {
@@ -1483,14 +1895,14 @@ class App {
       return;
     }
     if (tab === 'f' && !r.list.length) {
-      list.innerHTML = `<p>まだフレンドがいません。</p><p class="note">「せってい」のフレンドコードを友だちに送るか、友だちのコードを入れてね。</p>`;
+      list.innerHTML = `<p>まだフレンドがいません。</p><p class="note">上の「コピー」で自分のコードをコピーして友だちに送るか、「友だちのコードで追加」で友だちのコードを入れてね。</p>`;
       return;
     }
     list.innerHTML = r.list.length
       ? r.list
           .map(
             (x, i) =>
-              `<div class="row rkrow" data-u="${tab === 'f' && !x.me && x.u ? escapeHtml(x.u) : ''}" data-n="${escapeHtml(x.n)}" style="padding:6px 2px;border-bottom:1px solid rgba(255,255,255,0.06);${x.me ? 'background:rgba(255,212,0,0.15);border-radius:8px' : ''}"><b style="width:28px;text-align:center;color:${i < 3 ? '#ffd400' : '#fff'}">${x.rank || i + 1}</b><img alt="" style="width:30px;height:30px;border-radius:8px" ${this.porImg(PUNCHERS[x.c] ? x.c : 'tora', 0)}><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.n)}</span><b>${x.s}</b></div>`
+              `<div class="row rkrow" data-u="${tab === 'f' && !x.me && x.u ? escapeHtml(x.u) : ''}" data-n="${escapeHtml(x.n)}" style="padding:6px 2px;border-bottom:1px solid rgba(255,255,255,0.06);${x.me ? 'background:rgba(255,212,0,0.15);border-radius:8px' : ''}"><b style="width:28px;text-align:center;color:${i < 3 ? '#ffd400' : '#fff'}">${x.rank || i + 1}</b><img alt="" style="width:30px;height:30px;border-radius:8px" ${this.porImg(PUNCHERS[x.c] ? x.c : 'tora', 0)}><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.n)}${tab === 'f' && !x.me && x.u ? '<i class="fst off">オフライン</i>' : ''}</span><b>${x.s}</b></div>`
           )
           .join('')
       : '<p class="note">まだだれもいません。一番乗りしよう！</p>';
@@ -1507,6 +1919,10 @@ class App {
         };
       });
     if (r.me) me.innerHTML += `<p class="note">あなたの順位：<b>${r.me.rank}位</b>（${r.me.s}）</p>`;
+    if (tab === 'f') {
+      this.updateOnlineBits();
+      net.pokePresence();
+    }
   }
 
   // ===== せってい =====
@@ -1542,7 +1958,8 @@ class App {
          <button class="btn wide k report">不具合を送る（学校の端末など）</button>
        </div>
        <div class="card"><p class="note">浪人パンチフライト v${VERSION}（${BUILD}）<br>キックフライト（グレンジ）の遊びをもとにしたファンメイドのゲームです。公式とは関係ありません。</p></div>`,
-      'panel scroll'
+      'panel scroll',
+      'set'
     );
     $('.nm', s).textContent = this.save.name || '未設定';
     $('.rename', s).onclick = () => this.showName(false);
@@ -1747,7 +2164,7 @@ class App {
   startMatch() {
     const S = this.save;
     if (this.settings.quality === 'auto' && this.post.enabled) this.post.bloomOn = true;
-    this.screenEl.innerHTML = '';
+    this.clearScreen();
     this.paused = false;
     const deck = S.decks[S.char];
     this.match = new Match(this, {
@@ -1768,7 +2185,7 @@ class App {
   startTraining() {
     if (this.match) this.endMatch();
     if (this.settings.quality === 'auto' && this.post.enabled) this.post.bloomOn = true;
-    this.screenEl.innerHTML = '';
+    this.clearScreen();
     this.paused = false;
     const S = this.save;
     const deck = S.decks[S.char];
@@ -1777,13 +2194,16 @@ class App {
     if (this.lowGfx || this.settings.quality === 'low') this.setLowGfx(true);
   }
   startTutorial() {
-    this.screenEl.innerHTML = '';
+    this.clearScreen();
     this.paused = false;
     this.match = new Tutorial(this, { mode: 'scramble', char: this.save.char, difficulty: 'easy', playerName: this.save.name || 'プレイヤー', deck: this.save.decks[this.save.char], tutorial: true });
     this.match.resize(this.viewW, this.viewH);
   }
   endMatch() {
     clearTimeout(this._resBgm);
+    clearInterval(this._backT);
+    this._backT = 0;
+    this._resSoon = null;
     if (this.post.offNext) {
       this.post.enabled = false;
       this.post.offNext = false;
@@ -1871,6 +2291,7 @@ class App {
     this._resBgm = setTimeout(() => {
       if (this.match && this.match.phase === 'result') sound.playBgm('result');
     }, 1500);
+    const onlineHost = !!(r.online && this.room && this.room.role === 'host');
     const wl = r.win > 0 ? ['WIN!', 'win'] : r.win < 0 ? ['LOSE…', 'lose'] : ['DRAW', 'draw'];
     const rows = r.punchers
       .slice()
@@ -1897,7 +2318,7 @@ class App {
        <div class="note">今週のポイント +${rw.weekPt}${rw.mvp ? '・MVPボーナス' : ''}</div>
        ${rw.prizes.length ? `<div class="note" style="margin-top:6px;color:#ffd400">ディスクパックを開けた！</div><div class="prize">${prizes}</div>` : ''}</div>
        <div style="flex:1"></div>
-       <div class="row resbtns" style="width:100%;max-width:420px;gap:10px"><button class="btn k home" style="flex:1">${r.online ? '部屋を出る' : 'ホーム'}</button><button class="btn y again" style="flex:1.4">${r.online ? '部屋にもどる' : 'もう1回'}</button></div>`,
+       <div class="row resbtns" style="width:100%;max-width:420px;gap:10px"><button class="btn k home" style="flex:1">${r.online ? (onlineHost ? '部屋をとじる' : '部屋を出る') : 'ホーム'}</button><button class="btn y again" style="flex:1.4">${r.online ? '部屋にもどる<small class="cd"></small>' : 'もう1回'}</button></div>`,
       'result scroll'
     );
     // 自分のキャラの勝ち・負けポーズ（タイトルのうしろ）
@@ -1909,8 +2330,13 @@ class App {
       s.classList.add('hashero');
     }
     if (rw.prizes.length) setTimeout(() => sound.play('capsule'), 700);
-    $('.home', s).onclick = () => {
+    $('.home', s).onclick = async () => {
       sound.play('ui');
+      if (onlineHost) {
+        // ホストが出ると部屋がなくなるので、たしかめる
+        const ok = await this.confirm('部屋をとじる', '部屋をとじると、入っている人も全員外に出ます。<br>続けて遊ぶなら「部屋にもどる」を押してね。', 'とじる', 'もどる');
+        if (!ok || !s.isConnected) return;
+      }
       if (r.online) this.leaveRoom();
       this.endMatch();
       this.showHome();
@@ -1921,6 +2347,35 @@ class App {
       this.endMatch();
       this.startMatch();
     };
+    // v1.8：オンラインの部屋の試合は、しばらくすると自動で部屋の待ち画面にもどる（ホストがもどったら、ほかの人もすぐもどる）
+    if (r.online) {
+      let left = ROOM_BACK_S;
+      const cd = $('.again .cd', s);
+      const tick = () => {
+        if (!s.isConnected || !this.room || !this.match || this.match.phase !== 'result') return stopBack();
+        if (this.root.querySelector('.modal')) return; // 「部屋をとじる？」などを見ているあいだは数えない
+        cd.textContent = '（' + left + '）';
+        if (left <= 0) {
+          stopBack();
+          this.backToRoom();
+          return;
+        }
+        left--;
+      };
+      const stopBack = () => {
+        clearInterval(this._backT);
+        this._backT = 0;
+        this._resSoon = null;
+      };
+      clearInterval(this._backT);
+      this._backT = setInterval(tick, 1000);
+      this._resSoon = (sec, msg) => {
+        if (left > sec) left = sec;
+        if (msg) this.toast(escapeHtml(msg) + '（あと' + left + '秒でもどります）');
+        tick();
+      };
+      tick();
+    }
     // 勝ったチームのダルマに目が入る
     if (match && r.win !== 0) {
       const wt = r.win > 0 ? r.me.team : 1 - r.me.team;

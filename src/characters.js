@@ -419,31 +419,31 @@ export const PUNCHER_IDS = ['tora', 'naot', 'even', 'yuka', 'toriki', 'aomachi',
 // id は昔のセーブと合わせるため、前からある14枚はそのまま（中身が変わった）。mon は monsters.js の見た目
 export const OMAMORI = {
   // ===== アタック =====
-  akahon: { id: 'akahon', name: '革ジャンの先生', mon: 'rocker', move: 'パワーコード', kind: 'ATK', elem: 'fire', rare: 'R', cd: 12, icon: '♪', desc: 'ギターをかき鳴らして、ねらった敵を追いかける音の火の玉。当たると爆発する' },
-  tangocho: { id: 'tangocho', name: 'でっかい英語の先生', mon: 'eigo', move: 'ラウドイングリッシュ', kind: 'ATK', elem: 'wind', rare: 'R', cd: 10, icon: '英', desc: '大声の英語が回りながら飛んでいって、帰ってくる。何回も当たる' },
+  akahon: { id: 'akahon', name: '松永エリック', mon: 'rocker', move: 'パワーコード', kind: 'ATK', elem: 'fire', rare: 'R', cd: 12, icon: '♪', desc: 'ギターをかき鳴らして、ねらった敵を追いかける音の火の玉。当たると爆発する' },
+  tangocho: { id: 'tangocho', name: 'カリガン', mon: 'eigo', move: 'ラウドイングリッシュ', kind: 'ATK', elem: 'wind', rare: 'R', cd: 10, icon: '英', desc: '大声の英語が回りながら飛んでいって、帰ってくる。何回も当たる' },
   pencil: { id: 'pencil', name: '学食カレー', mon: 'curry', move: 'カレーキャノン', kind: 'ATK', elem: 'fire', rare: 'N', cd: 8, icon: '辛', desc: 'スプーンで熱々のカレーをまっすぐ速く飛ばす。当たるとやけど' },
   cookie: { id: 'cookie', name: 'うんち出る出るクッキー', mon: 'cookie', move: '出る出るクッキー', kind: 'ATK', elem: 'water', rare: 'SR', cd: 14, icon: '便', desc: 'てつんどのお母さんの手作りクッキーを投げる。当たった敵はおなかがゆるくなって、ときどき止まってしまう' },
   // ===== ヒール =====
-  drink: { id: 'drink', name: '購買のおばちゃん', mon: 'obachan', move: 'アイスどうぞ', kind: 'HEAL', elem: 'water', rare: 'N', cd: 18, icon: '氷', desc: 'やさしいおばちゃんのアイスで、HPを30%回復する' },
-  eyemask: { id: 'eyemask', name: 'やさしい英語の先生', mon: 'yasashi', move: 'あったかハンド', kind: 'HEAL', elem: 'wind', rare: 'R', cd: 22, icon: '癒', desc: '自分と近くの味方を、5秒かけて回復する' },
-  eki: { id: 'eki', name: '駅で助ける先生', mon: 'eki', move: '大丈夫ですか？', kind: 'HEAL', elem: 'wind', rare: 'R', cd: 20, icon: '駅', desc: '「大丈夫じゃないですよね！」いちばんHPが少ない味方を35%回復して、少しのあいだバリア。肩のアシスタントは応援だけ' },
+  drink: { id: 'drink', name: 'アイビーショップのお姉さん', mon: 'obachan', move: 'アイスどうぞ', kind: 'HEAL', elem: 'water', rare: 'N', cd: 18, icon: '氷', desc: 'アイビーショップのお姉さんのアイスで、HPを30%回復する' },
+  eyemask: { id: 'eyemask', name: 'グリック', mon: 'yasashi', move: 'あったかハンド', kind: 'HEAL', elem: 'wind', rare: 'R', cd: 22, icon: '癒', desc: '自分と近くの味方を、5秒かけて回復する' },
+  eki: { id: 'eki', name: 'まほこ', mon: 'eki', move: '大丈夫ですか？', kind: 'HEAL', elem: 'wind', rare: 'R', cd: 20, icon: '駅', desc: '「大丈夫じゃないですよね！」いちばんHPが少ない味方を35%回復して、少しのあいだバリア。肩のアシスタントは応援だけ' },
   mameta: { id: 'mameta', name: 'まめた', mon: 'mameta', move: 'もぐもぐ', kind: 'HEAL', elem: 'water', rare: 'R', cd: 16, icon: '豆', desc: 'なおの犬。なんでも食べてHPを20%回復。デッキに「うんち出る出るクッキー」があると回復が2倍' },
   ramen: { id: 'ramen', name: '学食ラーメン大盛り', mon: 'ramen', move: '大盛りいただきます', kind: 'HEAL', elem: 'fire', rare: 'N', cd: 20, icon: '麺', desc: 'HPを45%回復。おなかいっぱいで、3秒だけ少しおそくなる' },
   // ===== ブースト =====
-  hachimaki: { id: 'hachimaki', name: '駅伝カントク', mon: 'kantoku', move: '大作戦、発動！', kind: 'BUFF', elem: 'fire', rare: 'SR', cd: 22, icon: '監', desc: 'メガホンで気合い注入。近くの味方みんなが6秒間、攻撃力とスピードアップ' },
+  hachimaki: { id: 'hachimaki', name: '原監督', mon: 'kantoku', move: '大作戦、発動！', kind: 'BUFF', elem: 'fire', rare: 'SR', cd: 22, icon: '監', desc: 'メガホンで気合い注入。近くの味方みんなが6秒間、攻撃力とスピードアップ' },
   coffee: { id: 'coffee', name: 'ロケッツ', mon: 'rockets', move: 'ロケッツ・ライブ', kind: 'BUFF', elem: 'wind', rare: 'SR', cd: 16, icon: '♫', desc: 'バンド「ロケッツ」の生演奏。6秒間スピードアップ＋ブースト回復、近くの味方も少し速くなる。てつんどが使うと攻撃力もアップ' },
-  shield: { id: 'shield', name: '楽器の先生', mon: 'sanshin', move: '三線の調べ', kind: 'BUFF', elem: 'water', rare: 'SR', cd: 22, icon: '盾', desc: 'やさしい音色で、ダメージを受け止めるバリアをはる。近くの味方にも小さいバリア' },
+  shield: { id: 'shield', name: '輪島', mon: 'sanshin', move: '三線の調べ', kind: 'BUFF', elem: 'water', rare: 'SR', cd: 22, icon: '盾', desc: 'やさしい音色で、ダメージを受け止めるバリアをはる。近くの味方にも小さいバリア' },
   // ===== トラップ =====
   keshigomu: { id: 'keshigomu', name: '学食の油そば', mon: 'aburasoba', move: '油の水たまり', kind: 'TRAP', elem: 'fire', rare: 'R', cd: 14, icon: '油', desc: 'その場に油をまく。入った敵はつるっとすべって一瞬止まり、おそくなる' },
-  marksheet: { id: 'marksheet', name: '出席にきびしい先生', mon: 'shusseki', move: '欠席スタンプ', kind: 'TRAP', elem: 'wind', rare: 'SR', cd: 20, icon: '欠', desc: 'その場に「欠席」スタンプを置く。近づいた敵は欠席あつかいでスタン、しばらくディスクが使えない' },
-  tani: { id: 'tani', name: '単位くれそうな先生', mon: 'tani', move: '単位あげるよ', kind: 'TRAP', elem: 'water', rare: 'SR', cd: 18, icon: '単', desc: 'にこにこ「単位あげるよ」…でも近づいた敵は単位を落とす。持っているサクラ（ボール・旗）を落として、おそくなる' },
+  marksheet: { id: 'marksheet', name: 'アルドー', mon: 'shusseki', move: '欠席スタンプ', kind: 'TRAP', elem: 'wind', rare: 'SR', cd: 20, icon: '欠', desc: 'その場に「欠席」スタンプを置く。近づいた敵は欠席あつかいでスタン、しばらくディスクが使えない' },
+  tani: { id: 'tani', name: '梨本', mon: 'tani', move: '単位あげるよ', kind: 'TRAP', elem: 'water', rare: 'SR', cd: 18, icon: '単', desc: 'にこにこ「単位あげるよ」…でも近づいた敵は単位を落とす。持っているサクラ（ボール・旗）を落として、おそくなる' },
   // ===== ワープ =====
   warp: { id: 'warp', name: '終電', mon: 'shuden', move: '終電ダッシュ', kind: 'WARP', elem: 'wind', rare: 'SR', cd: 18, icon: '電', desc: '終電に飛び乗って、前へ瞬間移動する' },
   homewarp: { id: 'homewarp', name: '正門ゲート', mon: 'seimon', move: '正門へ', kind: 'WARP', elem: 'water', rare: 'R', cd: 28, icon: '門', desc: '自分のチームのダルマの前に瞬間移動' },
   // ===== ムーブ =====
   jet: { id: 'jet', name: 'きーちろう', mon: 'kiichiro', move: 'ギタースライド', kind: 'MOVE', elem: 'fire', rare: 'N', cd: 10, icon: '喜', desc: 'ピンクの髪のきーちろうと、大きくダッシュ。そのあいだは無敵' },
   fuwa: { id: 'fuwa', name: '青い鷹', mon: 'taka', move: '鷹の旋回', kind: 'MOVE', elem: 'wind', rare: 'R', cd: 12, icon: '鷹', desc: 'ブーストを全回復して、少しのあいだ無敵' },
-  screw: { id: 'screw', name: 'スクリュー先生', mon: 'screw', move: 'スクリューアッパー', kind: 'MOVE', elem: 'fire', rare: 'R', cd: 12, icon: '螺', desc: 'うずをまいて真上へ飛び上がる。近くの敵を上にふっとばす' },
+  screw: { id: 'screw', name: '伊藤真紀子', mon: 'screw', move: 'スクリューアッパー', kind: 'MOVE', elem: 'fire', rare: 'R', cd: 12, icon: '螺', desc: 'うずをまいて真上へ飛び上がる。近くの敵を上にふっとばす' },
   book: { id: 'book', name: 'ブック', mon: 'book', move: 'ブックダッシュ', kind: 'MOVE', elem: 'water', rare: 'UR', cd: 11, icon: '犬', desc: 'てつんどの犬（ボストンテリア）。前へ突っ走って、ぶつかった敵をはねとばす' },
 };
 export const OMAMORI_IDS = Object.keys(OMAMORI);

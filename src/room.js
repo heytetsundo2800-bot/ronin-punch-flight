@@ -188,7 +188,20 @@ export class Room {
       peer.close('bye');
       return;
     }
+    if (o.t === 'back') {
+      // v1.8：試合の結果画面から部屋の待ち画面にもどってきた
+      const m = this.state.members.find((x) => x.id === id);
+      if (m && m.res) {
+        m.res = false;
+        this.pushLobby();
+      }
+      return;
+    }
     this.emit('msg', id, o);
+  }
+  // v1.8：試合が始まったら、全員「まだ部屋の画面にいない（試合・結果を見ている）」にする
+  markAway() {
+    for (const m of this.state.members) m.res = true;
   }
   peerGone(id) {
     this.peers.delete(id);

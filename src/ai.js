@@ -543,7 +543,7 @@ export class Brain {
       this.dashCd = rand(1.5, 3.5);
     }
     // ダッシュ攻撃
-    if (g.kind === 'fight' && p.lock === g.obj && dist < 14 && dist > 5 && p.boost >= 3 && this.dashCd <= 0 && p.def.attack.kind === 'melee' && this.diff.atk !== false && (this.diff.lv || 4) >= 3 && Math.random() < this.diff.aim * 0.5) {
+    if (g.kind === 'fight' && p.lock === g.obj && dist < COMBAT.dashAtkRange - 0.5 && dist > 5 && p.boost >= 3 && this.dashCd <= 0 && p.def.attack.kind === 'melee' && this.diff.atk !== false && (this.diff.lv || 4) >= 3 && Math.random() < this.diff.aim * 0.5) {
       p.intent.events.push({ type: 'tap' });
       this.dashCd = rand(2, 4);
     }

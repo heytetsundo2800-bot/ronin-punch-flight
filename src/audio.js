@@ -1,4 +1,4 @@
-// 音：効果音はその場で合成。BGMはコードで作った曲のファイル（tools/music/bgm.py）
+// 音：効果音はその場で合成。BGMは鉄人さんが Suno で作った曲（bgm_private/。なければコードで作った曲＝tools/music/bgm.py）
 import { store } from './util.js';
 
 const BGM_LEVEL = 0.72; // 曲の大きさ（設定の「BGM」にかける）
@@ -218,6 +218,11 @@ class Sound {
       case 'lock':
         this.tone(1200, 0.05, 'square', 0.08 * v);
         this.tone(1800, 0.06, 'square', 0.06 * v, 0, 0.05);
+        break;
+      case 'unlock':
+        // v1.8：ロックオンが外れた（下がる音）
+        this.tone(1500, 0.05, 'square', 0.06 * v);
+        this.tone(900, 0.07, 'square', 0.05 * v, 0, 0.05);
         break;
       case 'charge':
         this.tone(330, 0.5, 'sine', 0.1 * v, 2.5);
@@ -443,12 +448,14 @@ class Sound {
     src.loopEnd = Math.min(L.end, buf.duration - 0.01);
     const g = c.createGain();
     // 1小節目の頭がちゃんと聞こえるように、頭の少し前から鳴らして、頭までに音量を上げきる（ブツッと鳴らないように）
-    const pre = Math.min(0.12, L.start);
+    // v1.8：Suno の曲は、曲のはじめ（play）から鳴らして、ループの終わりまで来たらループのはじめへもどる
+    const pre = L.play != null ? 0.06 : Math.min(0.12, L.start);
+    const at = L.play != null ? L.play : L.start - pre;
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(1, t + pre * 0.85);
     src.connect(g);
     g.connect(this.bgmGain);
-    src.start(t, L.start - pre);
+    src.start(t, at);
     this.cur = { name, src, g };
   }
   fadeBgm(sec) {
@@ -473,7 +480,9 @@ class Sound {
 // 曲のファイルとループの位置（秒）。小節数×拍子から計算（bgm.py と同じ）
 const MVER = typeof __MVER__ !== 'undefined' ? __MVER__ : '0';
 const loopOf = (bpm, bars) => ({ start: 0.5, end: 0.5 + Math.floor(((bars * 4 * 60) / bpm) * 44100) / 44100 });
-const BGM = {
+// v1.8：Suno の曲（bgm_private/）でビルドしたときは、そのループの位置（play＝鳴らしはじめる位置。曲のはじめから）
+const BGM_SUNO = typeof __BGM_LOOPS__ !== 'undefined' ? __BGM_LOOPS__ : null;
+const BGM = BGM_SUNO || {
   lobby: loopOf(118, 32),
   battle: loopOf(150, 32),
 };

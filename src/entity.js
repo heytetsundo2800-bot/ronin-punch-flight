@@ -239,7 +239,7 @@ export class Puncher {
     if (t && this.def.attack.kind === 'melee') {
       _v.subVectors(t.pos, this.pos);
       const d = _v.length();
-      if (d < 18 && d > 2) attack = true;
+      if (d < COMBAT.dashAtkRange && d > 2) attack = true;
     }
     const cost = attack ? 2 : 1;
     if (this.boost < cost - 0.001) {
@@ -329,7 +329,26 @@ export class Puncher {
       return;
     }
     this.lock = this.lock === t ? null : t;
+    this.lockOutT = -COMBAT.lockGrace;
     if (this.isPlayer) this.match.sfx('lock', this);
+  }
+  // v1.8：ロックしている敵が見えているか（自分の画面に映っているか。CPUは前のほう約70°以内）。すぐ近く（7m）は見えていることにする
+  lockVisible(L) {
+    const d = L.pos.distanceTo(this.pos);
+    if (d < 7) return true;
+    const cam = this.isPlayer && this.match.camera;
+    if (cam) {
+      _v.copy(L.pos);
+      _v.project(cam);
+      return _v.z < 1 && Math.abs(_v.x) < 1.35 && Math.abs(_v.y) < 1.15;
+    }
+    _v.subVectors(L.pos, this.pos).divideScalar(d);
+    return _v.dot(this.forward) > 0.34;
+  }
+  unlock(why) {
+    if (!this.lock) return;
+    this.lock = null;
+    if (this.isPlayer && why === 'view') this.match.sfx('unlock', this);
   }
   lockNext() {
     const c = this.match.lockCandidates(this);
@@ -339,6 +358,7 @@ export class Puncher {
     }
     const i = c.indexOf(this.lock);
     this.lock = c[(i + 1) % c.length];
+    this.lockOutT = -COMBAT.lockGrace;
   }
 
   // スロット 0,1 / 3,4 はディスク、2 はパンチャースキル
@@ -412,8 +432,21 @@ export class Puncher {
       return;
     }
     this.tickTimers(dt);
-    // ロックの相手がいなくなった／遠すぎる
-    if (this.lock && (!this.lock.alive || this.lock.pos.distanceTo(this.pos) > COMBAT.lockRange * 1.15)) this.lock = null;
+    // ロックの相手がいなくなった／遠すぎる／しばらく見えていない（v1.8：本物と同じく、視界から出ると外れる）
+    if (this.lock !== this._lockPrev) {
+      // ロックの相手が変わった（タップ・CPU・通信のどれでも）→ ふり向くあいだは少し待つ
+      this._lockPrev = this.lock;
+      this.lockOutT = -COMBAT.lockGrace;
+    }
+    if (this.lock) {
+      const L = this.lock;
+      if (!L.alive || L.pos.distanceTo(this.pos) > COMBAT.lockRange) this.lock = null;
+      else if (this.lockVisible(L)) this.lockOutT = 0;
+      else {
+        this.lockOutT = (this.lockOutT || 0) + dt;
+        if (this.lockOutT > COMBAT.lockOutTime) this.unlock('view');
+      }
+    }
 
     this.handleEvents();
 
@@ -467,9 +500,12 @@ export class Puncher {
         const ty = Math.atan2(_v.x, _v.z);
         const tp = Math.atan2(_v.y, Math.hypot(_v.x, _v.z));
         const steer = Math.abs(I.stickX) + Math.abs(I.stickY) > 0.4 || Math.abs(lx) + Math.abs(ly) > 0.002;
-        const k = steer ? 2.5 : 7;
-        this.yaw = angleDamp(this.yaw, ty, k, dt);
-        this.pitch = clamp(damp(this.pitch, tp, k, dt), -MOVE.pitchLimit, MOVE.pitchLimit);
+        // v1.8：前の半分ぐらいの強さで、速さにも上限（大きく回りこまれると追いきれない）
+        const k = steer ? COMBAT.lockTurnSteer : COMBAT.lockTurn;
+        const mx = COMBAT.lockTurnMax * dt;
+        const a = 1 - Math.exp(-k * dt);
+        this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(ty - this.yaw) * a, -mx, mx));
+        this.pitch = clamp(this.pitch + clamp((tp - this.pitch) * a, -mx, mx), -MOVE.pitchLimit, MOVE.pitchLimit);
       }
       // turnVis は「左へ曲がる＝プラス」（体のかたむき用）。右の親指で曲がったときも体をかたむける
       const lookRate = dt > 0 ? clamp(lx / dt / MOVE.yawRate, -1, 1) : 0;
@@ -496,15 +532,24 @@ export class Puncher {
         D.windup -= dt;
         this.vel.multiplyScalar(Math.exp(-10 * dt));
       } else {
-        // ダッシュ攻撃：相手へまっすぐ
+        // ダッシュ攻撃：相手へ向かう。v1.8：出だしは相手へまっすぐ向くが、そのあとは急には曲がれない（横によけられる）
         if (D.attack && D.target && D.target.alive) {
           _v.subVectors(D.target.pos, this.pos);
           const d = _v.length();
           _v.normalize();
-          this.yaw = Math.atan2(_v.x, _v.z);
-          this.pitch = clamp(Math.asin(clamp(_v.y, -1, 1)), -MOVE.pitchLimit, MOVE.pitchLimit);
+          const ty = Math.atan2(_v.x, _v.z);
+          const tp = clamp(Math.asin(clamp(_v.y, -1, 1)), -MOVE.pitchLimit, MOVE.pitchLimit);
+          if (!D.aimed) {
+            D.aimed = true;
+            this.yaw = ty;
+            this.pitch = tp;
+          } else {
+            const mx = COMBAT.dashAtkTurn * dt;
+            this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(ty - this.yaw), -mx, mx));
+            this.pitch = clamp(this.pitch + clamp(tp - this.pitch, -mx, mx), -MOVE.pitchLimit, MOVE.pitchLimit);
+          }
           this.updateAxes();
-          if (d < 2.6 + D.target.radius && !D.hitDone) {
+          if (d < COMBAT.dashAtkHit + D.target.radius && !D.hitDone) {
             D.hitDone = true;
             this.match.combat.dashHit(this, D.target);
             D.t = Math.min(D.t, 0.06);

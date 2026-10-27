@@ -666,7 +666,7 @@ export class Match {
       // ロック中の相手はのぞく（そのままタップ＝ダッシュ攻撃。外すのは右の顔アイコンで）
       if (o.team === P.team || !o.alive || o === P.lock) continue;
       const d3 = o.pos.distanceTo(P.pos);
-      if (d3 > COMBAT.lockRange) continue;
+      if (d3 > COMBAT.candidateRange) continue;
       _v.copy(o.pos);
       _v.y += 0.3;
       _v.project(this.camera);

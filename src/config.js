@@ -1,5 +1,5 @@
 // 遊びごこちの数字（ここを変えると操作感がかわる）
-export const VERSION = '1.7.1';
+export const VERSION = '1.8.0';
 export const BUILD = '2026-10-27';
 
 export const MATCH_TIME = 180; // 3分
@@ -39,9 +39,18 @@ export const MOVE = {
 export const COMBAT = {
   autoRange: 3.4, // 近接の自動攻撃が始まる距離
   autoCone: 0.62, // 前方のどれくらいの角度で自動攻撃するか（cos）
-  lockRange: 46, // ロックオンが外れる距離
+  // v1.8：ロックオンを本物のキックフライトに近づけて弱く（前は 約53m まで外れず、向きは吸いつき、ダッシュ攻撃は必ず当たった）
+  lockRange: 40, // ロックオンが外れる距離（前は 46×1.15≒53m）
   lockCandidates: 3, // 右に出す敵アイコンの数
-  candidateRange: 40,
+  candidateRange: 36, // 右に敵アイコンが出る距離・敵をタップしてロックできる距離（外れる距離より少し短く）
+  lockOutTime: 1.0, // 敵が視界の外にこれだけ出ていたら外れる（秒）
+  lockGrace: 1.2, // ロックした直後は、ふり向くあいだ少し長く待つ（秒）
+  lockTurn: 3.5, // ロック中に敵のほうへ向く強さ（前は 7）
+  lockTurnSteer: 1.25, // 自分で向きを変えているときの強さ（前は 2.5）
+  lockTurnMax: 4.0, // 向く速さの上限（rad/秒）
+  dashAtkRange: 12, // ロック中のタップがダッシュ攻撃になる距離（前は 18m）
+  dashAtkTurn: 2.4, // ダッシュ攻撃が相手を追って曲がれる速さ（rad/秒。前は 無限＝必ず当たる）
+  dashAtkHit: 1.6, // ダッシュ攻撃が当たる近さ（＋相手の大きさ。前は 2.6）
   hitStop: 0.055,
   knockback: 17,
   stunHeavy: 0.45,

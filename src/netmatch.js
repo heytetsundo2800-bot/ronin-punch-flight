@@ -30,7 +30,7 @@ const REPLAY = new Set(['koFeedback', 'respawnFeedback', 'justFeedback', 'hitFee
 // 本人の端末ではすでに出しているので、もう一度は出さないもの
 const SELF_SKIP = new Set(['sfx:charge', 'fx.chargeIcon', 'fx.summonAct', 'sfx:elem', 'fx.elemSwitch', 'sfx:shot', 'fx.bike']);
 // ホストの本人にだけ出る音（ほかの人の画面では出さない）
-const PERSONAL_SFX = new Set(['lock', 'land', 'spReady', 'respawn']);
+const PERSONAL_SFX = new Set(['lock', 'unlock', 'land', 'spReady', 'respawn']);
 
 const nowS = () => performance.now() / 1000;
 // ほかの人の「動く技」のあいだに出す光のすじ（自分の端末で計算していない人用）

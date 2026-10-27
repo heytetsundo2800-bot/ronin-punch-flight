@@ -1,6 +1,6 @@
 // アカウント・ランキング（サーバー：/api/rpf）
 // サーバーやデータベースがまだ無いときも、ゲームはふつうに遊べる
-import { store, escapeHtml, el, $, isIOS, isStandalone } from './util.js';
+import { store, escapeHtml, el, $, isIOS, isStandalone, copyText, pickFriendCode } from './util.js';
 import { PUNCHERS } from './characters.js';
 import { rankOf } from './config.js';
 import { weekId, saveSave } from './save.js';
@@ -23,6 +23,7 @@ class Net {
   init(app) {
     this.app = app;
     this.ping();
+    this.startPresence();
     // 招待リンク（?f=フレンドコード）
     try {
       const q = new URLSearchParams(location.search);
@@ -210,6 +211,72 @@ class Net {
     else if (r.err !== 'auth') this.app && this.app.toast(this.errText(r.err));
     return r;
   }
+  // ===== v1.8：フレンドのオンライン表示と、部屋への招待 =====
+  // アプリを開いているあいだ、ときどき「いるよ」を送る（メニュー・部屋＝12秒ごと、試合中＝45秒ごと、画面を閉じているあいだは送らない）
+  // 返事に、自分あての招待と（ほしいときは）オンラインのフレンドがのってくる
+  startPresence() {
+    if (this._pres) return;
+    this._pres = { t: null, n: 0, busy: false };
+    if (typeof document !== 'undefined')
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) this.pokePresence();
+      });
+    this.schedulePresence(1500);
+  }
+  schedulePresence(ms) {
+    const P = this._pres;
+    if (!P) return;
+    clearTimeout(P.t);
+    P.t = setTimeout(() => this.presenceTick(), ms);
+  }
+  // すぐに1回送る（フレンドの一覧を開いたときなど）
+  pokePresence() {
+    this.schedulePresence(60);
+  }
+  // しばらく送っていなければ送る（試合が終わってホームにもどったときなど。試合中は45秒ごとだったので）
+  pokeIfStale() {
+    const P = this._pres;
+    if (P && Date.now() - (P.last || 0) > 13000) this.pokePresence();
+  }
+  async presenceTick() {
+    const P = this._pres;
+    if (!P) return;
+    if (P.busy) return this.schedulePresence(1000);
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (!this.ready || !this.acct || hidden) return this.schedulePresence(hidden ? 20000 : 8000);
+    const app = this.app;
+    const st = app && app.presenceState ? app.presenceState() : 'menu';
+    P.n++;
+    const wantF = !!(app && app.wantFriends && app.wantFriends(P.n));
+    P.busy = true;
+    P.last = Date.now();
+    const r = await this.call('hb', { s: st, f: wantF ? 1 : 0 }, { timeout: 7000 });
+    P.busy = false;
+    if (r && r.ok) {
+      if (Array.isArray(r.fr)) {
+        this.fon = new Map(r.fr.filter((x) => x && typeof x.u === 'string').map((x) => [x.u, x.s]));
+        this.fonT = Date.now();
+        if (app && app.onPresence) app.onPresence();
+      }
+      if (Array.isArray(r.inv) && r.inv.length && app && app.onInvites) app.onInvites(r.inv);
+    }
+    if (app && app.showNextInvite) app.showNextInvite();
+    this.schedulePresence(st === 'match' ? 45000 : 12000);
+  }
+  // フレンドのいまのようす：'menu'（オンライン）・'room'（部屋にいる）・'match'（対戦中）・null（オフライン）
+  friendState(uid) {
+    if (!this.fon || !this.fonT || Date.now() - this.fonT > 90000) return null;
+    return this.fon.get(uid) || null;
+  }
+  onlineFriends() {
+    if (!this.fon || !this.fonT || Date.now() - this.fonT > 90000) return 0;
+    return this.fon.size;
+  }
+  // 部屋に招待する
+  async inviteFriend(uid, code) {
+    if (!this.acct) return { ok: false, err: 'auth' };
+    return this.call('inv', { to: uid, r: code });
+  }
   async report(text, info) {
     return this.call('report', { text, info }, { anon: !this.acct });
   }
@@ -243,7 +310,7 @@ class Net {
     }
     const inst = isIOS && !isStandalone() ? '<p class="note">※iPhoneでは、Safari とホーム画面に追加したアプリで保存場所が別になります。アプリで遊ぶ人は、アプリの中で引き継ぎコードを使ってください。</p>' : '';
     box.innerHTML = `<h3>アカウント</h3>
-      ${A ? `<p>フレンドコード：<b style="color:#ffd400;letter-spacing:1px">${escapeHtml(A.fc || '----')}</b></p>` : this.noAcct ? '<p class="note">アカウントは消しました。ランキングやフレンドを使うときは「アカウントを作る」を押してね。</p>' : !store.ok() ? '<p class="note">この端末（ブラウザ）は記録を保存できない設定です（プライベートブラウズなど）。アプリを閉じると記録が消えます。</p>' : '<p class="note">名前を決めると自動でアカウントができます。</p>'}
+      ${A ? this.codeBarHtml() : this.noAcct ? '<p class="note">アカウントは消しました。ランキングやフレンドを使うときは「アカウントを作る」を押してね。</p>' : !store.ok() ? '<p class="note">この端末（ブラウザ）は記録を保存できない設定です（プライベートブラウズなど）。アプリを閉じると記録が消えます。</p>' : '<p class="note">名前を決めると自動でアカウントができます。</p>'}
       <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:6px">
         ${A ? '<button class="btn small y invite">フレンドを招待</button><button class="btn small k addf">コードで追加</button><button class="btn small k code">機種変更（引き継ぎコード）</button>' : '<button class="btn small y reg">アカウントを作る</button>'}
         <button class="btn small k restore">引き継ぎコードで戻す</button>
@@ -255,13 +322,9 @@ class Net {
       if (r && !r.ok) this.app.toast(this.errText(r.err));
       this.renderAccount(box);
     };
-    if (q('.invite')) q('.invite').onclick = () => {
-      const url = location.origin + '/?f=' + A.fc + '&openExternalBrowser=1';
-      const text = '浪人パンチフライトでフレンドになろう！ ' + url;
-      if (navigator.share) navigator.share({ title: '浪人パンチフライト', text: '浪人パンチフライトでフレンドになろう！', url }).catch(() => {});
-      else window.open('https://line.me/R/share?text=' + encodeURIComponent(text), '_blank');
-    };
-    if (q('.addf')) q('.addf').onclick = () => this.prompt('フレンドコードを入れてね（8文字）', 8, async (v) => this.addFriend(v));
+    if (q('.invite')) q('.invite').onclick = () => this.shareFriendLink();
+    if (q('.addf')) q('.addf').onclick = () => this.addFriendModal();
+    this.bindCodeBar(box);
     if (q('.code')) q('.code').onclick = async () => {
       const ok = await this.app.confirm('引き継ぎコード', '新しいスマホで「引き継ぎコードで戻す」に入れると、記録をそのまま持っていけます。<br>コードは1回だけ使えます。戻すと、この端末はログアウトします。', 'コードを出す');
       if (!ok) return;
@@ -312,6 +375,88 @@ class Net {
       this.app.toast(r.ok ? '消しました' : '消せませんでした');
       this.renderAccount(box);
     };
+  }
+  // フレンドになるリンクを送る（LINEなど）。リンクにもコードを書いておく
+  shareFriendLink() {
+    const A = this.acct;
+    if (!A || !A.fc) return;
+    const url = location.origin + '/?f=' + A.fc + '&openExternalBrowser=1';
+    const msg = '浪人パンチフライトでフレンドになろう！フレンドコード ' + A.fc;
+    if (navigator.share) navigator.share({ title: '浪人パンチフライト', text: msg, url }).catch(() => {});
+    else window.open('https://line.me/R/share?text=' + encodeURIComponent(msg + ' ' + url), '_blank');
+  }
+  // v1.8：自分のフレンドコード（タップかボタンでコピー）
+  codeBarHtml() {
+    const fc = (this.acct && this.acct.fc) || '';
+    return `<div class="fcbar"><button class="fcv" aria-label="フレンドコードをコピー"><small>あなたのフレンドコード</small><b>${escapeHtml(fc || '--------')}</b></button><button class="btn small y fccopy"${fc ? '' : ' disabled'}>コピー</button></div>`;
+  }
+  bindCodeBar(box) {
+    const fc = (this.acct && this.acct.fc) || '';
+    const copy = async () => {
+      if (!fc) return;
+      const ok = await copyText(fc);
+      if (!this.app) return;
+      if (ok) {
+        this.app.toast('フレンドコード ' + escapeHtml(fc) + ' をコピーしました<br>LINEなどに貼りつけて、友だちに送ってね', 3200);
+        const b = box.querySelector('.fccopy');
+        if (b) {
+          b.textContent = 'コピーした！';
+          clearTimeout(b._t);
+          b._t = setTimeout(() => b.isConnected && (b.textContent = 'コピー'), 1800);
+        }
+      } else this.app.toast('コピーできませんでした。コード ' + escapeHtml(fc) + ' を伝えてね', 3200);
+    };
+    box.querySelectorAll('.fcv, .fccopy').forEach((b) => (b.onclick = copy));
+  }
+  // v1.8：友だちのフレンドコードで追加する（LINEでもらった文やリンクをそのまま貼りつけてもOK）
+  addFriendModal(done) {
+    if (!this.acct) {
+      this.app && this.app.toast('フレンドを使うにはアカウントが必要です（せってい→アカウント）', 3000);
+      return;
+    }
+    const canPaste = typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.readText === 'function';
+    const m = el(
+      'div',
+      'modal fcadd',
+      `<div class="box"><h3>フレンドを追加</h3><p class="note">友だちのフレンドコード（8文字）を入れてね。LINEでもらった文やリンクを、そのまま貼りつけてもOK。</p>
+        <div class="field"><input class="fcin" maxlength="400" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="例：ABCD2345"></div>
+        <div class="fcprev"></div>
+        <div class="btns"><button class="btn y ok" disabled>追加する</button>${canPaste ? '<button class="btn k paste">コピーしたコードを貼りつけ</button>' : ''}<button class="btn k no">やめる</button></div></div>`
+    );
+    this.app.root.appendChild(m);
+    const inp = m.querySelector('.fcin'), prev = m.querySelector('.fcprev'), ok = m.querySelector('.ok');
+    const update = () => {
+      const c = pickFriendCode(inp.value);
+      ok.disabled = !c;
+      prev.innerHTML = c ? `コード <b>${escapeHtml(c)}</b> の人を追加します` : inp.value.trim() ? '<span class="bad">8文字のコードが見つかりません（I・O・0・1 は使われていません）</span>' : '';
+      return c;
+    };
+    inp.oninput = update;
+    setTimeout(() => inp.focus(), 50);
+    if (m.querySelector('.paste'))
+      m.querySelector('.paste').onclick = async () => {
+        try {
+          const t = await navigator.clipboard.readText();
+          inp.value = t.slice(0, 400);
+          if (!update()) this.app.toast('コピーした文の中に、フレンドコードが見つかりませんでした', 2600);
+        } catch (e) {
+          this.app.toast('入れる欄を長押しして「ペースト」してね', 2600);
+          inp.focus();
+        }
+      };
+    const submit = async () => {
+      const c = update();
+      if (!c) return;
+      ok.disabled = true;
+      const r = await this.addFriend(c);
+      if (r && r.ok) {
+        m.remove();
+        if (done) done(r);
+      } else ok.disabled = false;
+    };
+    ok.onclick = submit;
+    inp.onkeydown = (e) => e.key === 'Enter' && submit();
+    m.querySelector('.no').onclick = () => m.remove();
   }
   prompt(title, max, cb) {
     const m = el('div', 'modal', `<div class="box"><h3>${title}</h3><div class="field"><input maxlength="${max}" autocapitalize="characters" autocomplete="off"></div><div class="btns"><button class="btn y ok">OK</button><button class="btn k no">やめる</button></div></div>`);

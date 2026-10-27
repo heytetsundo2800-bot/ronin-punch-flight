@@ -123,3 +123,42 @@ export function vibrate(ms) {
     if (navigator.vibrate) navigator.vibrate(ms);
   } catch (e) {}
 }
+
+// v1.8：文字をコピーする（iPhone の古い Safari・LINE のブラウザでも使えるように、だめなら選んでコピーする方法で）
+export async function copyText(t) {
+  t = String(t);
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && (typeof window === 'undefined' || window.isSecureContext !== false)) {
+      await navigator.clipboard.writeText(t);
+      return true;
+    }
+  } catch (e) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t;
+    ta.setAttribute('readonly', '');
+    // 16px 以上にしないと iPhone で画面が拡大される
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, t.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// v1.8：フレンドコード（8文字）を、貼りつけた文やリンクの中から取り出す
+//   「ABCD2345」「abcd 2345」「…フレンドコード：ABCD2345」「https://…/?f=ABCD2345&…」のどれでもOK
+const FC_CHARS = /^[A-HJ-NP-Z2-9]{8}$/;
+export function pickFriendCode(text) {
+  const s = String(text || '').normalize('NFKC').toUpperCase();
+  const u = s.match(/[?&]F=([A-Z0-9]{8})(?![A-Z0-9])/);
+  if (u && FC_CHARS.test(u[1])) return u[1];
+  const toks = s.split(/[^A-Z0-9]+/).filter((x) => FC_CHARS.test(x));
+  if (toks.length) return toks[toks.length - 1];
+  const all = s.replace(/[^A-Z0-9]/g, '');
+  return FC_CHARS.test(all) ? all : '';
+}

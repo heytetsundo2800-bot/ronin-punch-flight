@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OMAMORI, OMAMORI_IDS } from './characters.js';
 import { ELEM } from './config.js';
 
-export const PROTO = 5; // 形を変えたら上げる（ちがう版どうしでは遊べない）。3：ディスクのモンスター（summonAct）・弾を撃った人の番号。4：v1.5 の仲間（状態のしるし・新しい弾とわな）。5：v1.7 てつんどの遠くへの弾（beat・撃つ動きのしるし）
+export const PROTO = 6; // 形を変えたら上げる（ちがう版どうしでは遊べない）。3：ディスクのモンスター（summonAct）・弾を撃った人の番号。4：v1.5 の仲間（状態のしるし・新しい弾とわな）。5：v1.7 てつんどの遠くへの弾（beat・撃つ動きのしるし）。6：v1.8 試合のあと部屋にもどる（back・toLobby）・ロックオンの決まり
 
 // 状態の番号
 export const STATES = ['hover', 'fly', 'dash', 'cruise', 'step', 'roll', 'brake', 'uturn', 'hurt', 'stun', 'ko', 'special', 'skill'];
