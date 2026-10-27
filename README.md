@@ -88,6 +88,7 @@ v1.5 から、ディスクは動物ではなく、みんなの大学生活のも
 - v1.8：**フレンドを招待**（ブロスタのように）。部屋の「フレンドを招待」に、フレンドが「オンライン・部屋にいる・対戦中・オフライン」で出る。「招待」を押すと、相手の画面に「〇〇さんから招待！」と「参加する」が出て、押すとその部屋に入る（試合中の人には、試合が終わってから出る。招待は2分で消える）。ホームの「オンライン対戦」にも、オンラインのフレンドの数が出る
 - v1.8：**試合のあとは同じ部屋の待ち画面にもどる**。結果のあと15秒で（ホストがもどったら、ほかの人も5秒で）自動でもどる。部屋は作りなおさずに、ルール・ステージ・CPU・チームを変えてもう1試合。まだ結果を見ている人には「結果画面」と出る。ホストの結果画面の左のボタンは「部屋をとじる」（たしかめてから、全員外に出る）
 - v1.8：**フレンドコードのコピー**。「ランキング」→「フレンド」と「せってい」→「アカウント」に自分のコード（タップか「コピー」でコピー）。「友だちのコードで追加」は、LINEでもらった文やリンクをそのまま貼りつけてもコードを取り出す
+- v1.8.1：**ホームにフレンドの欄**。左上（名前の下）に、フレンドの顔と「オンライン・部屋にいる・対戦中・オフライン」（顔の右下の点の色も同じ：緑・青・オレンジ・灰色）。オンラインの人が上、オフラインの人はうすく。見出しの「●2人」はオンラインの人数。押すと全員の一覧（そこから「フレンドを追加・コードを送る」）。人数が多いと「ほか N人」。フレンドがいないときは「フレンドを追加」ボタン。アカウントのない人には出さない
 - オンラインのしるし：アプリを開いているあいだ、12秒ごと（試合中は45秒ごと）にサーバーへ `hb` を送る（`rpf:on:<uid>`、40〜100秒で消える）。フレンドに見えるのは状態だけで、部屋コードは招待を送ったときだけ（`rpf:iv:<uid>`、フレンドどうしだけ・1人10分20回まで）
 
 - つなぎかた：サーバー（`/api/rpf`）は最初のあいさつ（WebRTC の SDP）を受けわたすだけ。試合中は端末どうしが直接つながる
@@ -129,6 +130,10 @@ v1.5 から、ディスクは動物ではなく、みんなの大学生活のも
 - **町田ブラザーズ**（ドラ・エブン・ナオT・トリキが同じチーム）：4人とも攻撃力とスピードアップ
 
 試合のはじめに相性が出ていたら知らせが出て、左右のメンバーの顔にハートのしるしが付く。
+
+## v1.8.1 で変わったこと
+
+- **ホームにフレンドの欄**（上の「フレンドとオンライン対戦」）。ホームを開いたときは、フレンドのようすが20秒より古ければ次の「いるよ」（`hb`）でもらいなおす（それ以外は今までどおり2回に1回＝約24秒ごと）
 
 ## v1.8 で変わったこと
 
@@ -233,4 +238,4 @@ npm run build    # 本番ビルド（Vercel もこれを実行）
 - または `CF_TURN_KEY_ID` と `CF_TURN_KEY_TOKEN`：Cloudflare の TURN
 - または `RPF_ICE`：ICE サーバーの JSON 配列をそのまま
 
-テスト：`node tools/api/api_test.js`、`node tools/api/room_test.js`、`node tools/api/devserver.js --port 8813` を動かして `python3 tools/acct_e2e.py`・`python3 tools/online_e2e.py [scramble|flag|ball] [sakura|campus]`・`python3 tools/online_lag.py 150 80 0.1`・`python3 tools/online_kits.py`（新しい技のオンライン）・`python3 tools/stage_test.py`（ステージの物がサクラやボールにめりこんでいないか）・`python3 tools/online_v17.py`（てつんどの弾・自動回復・おさんぽCPU・タップでロックのオンライン）。`node tools/points_test.mjs`（CPUの強さともらえる点）。`public/` を 8812 で配信して `python3 tools/ctrl_test.py`・`tools/tut_test.py`・`tools/modes_test.py`・`tools/disc_test.py`（ディスク）・`tools/kits_test.py`（18人のCPU戦と相性）・`tools/bgm_test.py`（BGM）・`tools/v17_test.py`（CPUの6段階・てつんど・訓練場・ルール・パンチャー画面・操作）。v1.8：`tools/tabbar_test.py`（下のタブ）・`tools/lock_test.py`（ロックオン）・`tools/a2hs_test.py`（アプリにする方法）・`tools/v18_disc_test.py`（ディスクの画面と名前）、8813 で `tools/friend_code_test.py`（コードのコピー・貼りつけで追加）・`tools/invite_test.py`（オンライン表示と招待）
+テスト：`node tools/api/api_test.js`、`node tools/api/room_test.js`、`node tools/api/devserver.js --port 8813` を動かして `python3 tools/acct_e2e.py`・`python3 tools/online_e2e.py [scramble|flag|ball] [sakura|campus]`・`python3 tools/online_lag.py 150 80 0.1`・`python3 tools/online_kits.py`（新しい技のオンライン）・`python3 tools/stage_test.py`（ステージの物がサクラやボールにめりこんでいないか）・`python3 tools/online_v17.py`（てつんどの弾・自動回復・おさんぽCPU・タップでロックのオンライン）。`node tools/points_test.mjs`（CPUの強さともらえる点）。`public/` を 8812 で配信して `python3 tools/ctrl_test.py`・`tools/tut_test.py`・`tools/modes_test.py`・`tools/disc_test.py`（ディスク）・`tools/kits_test.py`（18人のCPU戦と相性）・`tools/bgm_test.py`（BGM）・`tools/v17_test.py`（CPUの6段階・てつんど・訓練場・ルール・パンチャー画面・操作）。v1.8：`tools/tabbar_test.py`（下のタブ）・`tools/lock_test.py`（ロックオン）・`tools/a2hs_test.py`（アプリにする方法）・`tools/v18_disc_test.py`（ディスクの画面と名前）、8813 で `tools/friend_code_test.py`（コードのコピー・貼りつけで追加）・`tools/invite_test.py`（オンライン表示と招待）。v1.8.1：8813 で `tools/home_friends_test.py`（ホームのフレンドの欄）
