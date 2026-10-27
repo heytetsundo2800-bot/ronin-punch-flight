@@ -44,7 +44,12 @@ const LIMIT = {
   rmk: [20, 3600], // 部屋をつくる：IPごとに1時間20回
   rmj: [60, 3600], // 部屋に入る：IPごとに1時間60回
   rmio: [400, 60], // 部屋の手紙の送り受け：IPごとに1分400回（同じWi-Fiに何人もいるとき用。ふつうの制限とは別）
+  inv: [20, 600], // v1.8：部屋への招待を送る：1人10分20回
 };
+// v1.8：フレンドのオンライン表示と、部屋への招待
+const PRES_TTL = { menu: 40, room: 40, match: 100 }; // オンラインのしるしが消えるまでの秒数（アプリは12秒・試合中は45秒ごとに送る）
+const INV_TTL = 120; // 招待は2分で消える
+const INV_MAX = 5; // 一度に返す招待の数
 const UID_RE = /^[0-9a-z]{6,20}$/;
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,100}$/;
 const FC_RE = /^[A-HJ-NP-Z2-9]{8}$/;
@@ -64,6 +69,8 @@ const K = {
   reports: 'rpf:reports', // リスト：不具合の報告（新しい順）
   room: (code) => 'rpf:rm:' + code, // オンライン対戦の部屋（JSON）
   rq: (code, pid) => 'rpf:rq:' + code + ':' + pid, // リスト：部屋の中の手紙（接続のあいさつ）
+  on: (uid) => 'rpf:on:' + uid, // v1.8：いまアプリを開いているか（JSON {s:'menu'|'room'|'match', t}。すぐ消える）
+  iv: (uid) => 'rpf:iv:' + uid, // v1.8：ハッシュ：その人あての部屋の招待（送った人の uid → JSON {r:部屋コード, t, n:名前, c:キャラ}）
 };
 
 class ApiError extends Error {
@@ -633,6 +640,8 @@ ACTIONS.fdel = async (ctx, b) => {
   await ctx.db.tx([
     ['SREM', K.fr(me.uid), b.uid],
     ['SREM', K.fr(b.uid), me.uid],
+    ['HDEL', K.iv(me.uid), b.uid],
+    ['HDEL', K.iv(b.uid), me.uid],
   ]);
   return { ok: true };
 };
@@ -667,10 +676,13 @@ ACTIONS.del = async (ctx) => {
     ['DEL', K.rl('s', uid)],
     ['HDEL', K.pub, uid],
     ['ZREM', K.all, uid],
+    ['DEL', K.on(uid)],
+    ['DEL', K.iv(uid)],
+    ['DEL', K.rl('iv', uid)],
   ];
   // 週のランキング：今週・先週と、まだ消えていない古い週（45日 → 7週ぶん）
   for (let i = 0; i < 7; i++) cmds.push(['ZREM', K.week(weekId(ctx.now - i * WEEK)), uid]);
-  for (const f of friends) cmds.push(['SREM', K.fr(f), uid]);
+  for (const f of friends) cmds.push(['SREM', K.fr(f), uid], ['HDEL', K.iv(f), uid]);
   if (FC_RE.test(me.fc || '')) cmds.push(['DEL', K.fc(me.fc)]);
   if (HASH_RE.test(me.tc || '')) cmds.push(['DEL', K.code(me.tc)]);
   if (int0(me.rep) > 0) {
@@ -836,6 +848,68 @@ ACTIONS.rmx = async (ctx, b) => {
   if (room.k !== sha(b.hk)) fail(403, 'deny');
   if (b.op === 'close') await ctx.db.pipe([['DEL', K.room(code)]]);
   else await ctx.db.pipe([['SET', K.room(code), JSON.stringify({ ...room, o: b.op === 'open' ? 1 : 0 }), 'KEEPTTL']]);
+  return { ok: true };
+};
+
+// ===== v1.8：オンライン表示と招待 =====
+// オンラインのしるし（アプリを開いているあいだ、ときどき送る）：{s:'menu'|'room'|'match', f:1}
+//   → {inv:[{u, n, c, r, t}]（自分あての部屋の招待。受けとったら消える）, fr:[{u, s}]（f:1 のとき。オンラインのフレンドだけ）}
+//   回数が多いので、IP の制限は使わない（本人確認だけ。データベースの命令は3〜5個）
+ACTIONS.hb = async (ctx, b) => {
+  const s = typeof b.s === 'string' && PRES_TTL[b.s] ? b.s : 'menu';
+  const wantF = b.f === 1 || b.f === true;
+  const { me, x } = await begin(ctx, { noIp: true, extra: (uid) => (uid ? [['HGETALL', K.iv(uid)], ...(wantF ? [['SMEMBERS', K.fr(uid)]] : [])] : []) });
+  const uid = me.uid;
+  const raw = Array.isArray(x[0]) ? x[0] : [];
+  const inv = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    const from = raw[i];
+    if (typeof from !== 'string' || !UID_RE.test(from)) continue;
+    let o = null;
+    try {
+      o = JSON.parse(raw[i + 1]);
+    } catch (e) {}
+    if (!o || typeof o.r !== 'string' || !ROOM_RE.test(o.r) || !(ctx.now - num(o.t) < INV_TTL * 1000)) continue;
+    inv.push({ u: from, n: typeof o.n === 'string' ? o.n : '', c: CHARS.includes(o.c) ? o.c : 'tora', r: o.r, t: num(o.t) });
+  }
+  inv.sort((a, b2) => b2.t - a.t);
+  const friends = wantF ? (Array.isArray(x[1]) ? x[1] : []).filter((u) => typeof u === 'string' && UID_RE.test(u)).slice(0, FRIEND_MAX) : [];
+  const cmds = [['SET', K.on(uid), JSON.stringify({ s, t: ctx.now }), 'EX', PRES_TTL[s]]];
+  if (raw.length) cmds.push(['DEL', K.iv(uid)]);
+  if (friends.length) cmds.push(['MGET', ...friends.map((f) => K.on(f))]);
+  const r = await ctx.db.pipe(cmds);
+  const out = { ok: true, inv: inv.slice(0, INV_MAX) };
+  if (wantF) {
+    const vals = friends.length && Array.isArray(r[r.length - 1]) ? r[r.length - 1] : [];
+    out.fr = [];
+    friends.forEach((f, i) => {
+      let o = null;
+      try {
+        o = JSON.parse(vals[i]);
+      } catch (e) {}
+      if (o && PRES_TTL[o.s]) out.fr.push({ u: f, s: o.s });
+    });
+  }
+  return out;
+};
+
+// フレンドを部屋に招待する：{to:uid, r:部屋コード}（フレンドどうしだけ・部屋があるときだけ）
+ACTIONS.inv = async (ctx, b) => {
+  if (typeof b.to !== 'string' || !UID_RE.test(b.to)) fail(400, 'bad');
+  const code = roomCode(b.r);
+  const claimed = ctx.auth && !ctx.auth.bad && UID_RE.test(ctx.auth.uid || '') ? ctx.auth.uid : 'anon';
+  const { me, x } = await begin(ctx, {
+    fields: ['name', 'c'],
+    limits: [[K.rl('iv', claimed), ...LIMIT.inv]],
+    extra: (uid) => (uid ? [['SISMEMBER', K.fr(uid), b.to], ['EXISTS', K.room(code)]] : []),
+  });
+  if (b.to === me.uid) fail(400, 'self');
+  if (int0(x[0]) !== 1) fail(403, 'notfriend');
+  if (int0(x[1]) !== 1) fail(404, 'nf');
+  await ctx.db.pipe([
+    ['HSET', K.iv(b.to), me.uid, JSON.stringify({ r: code, t: ctx.now, n: me.name || '', c: CHARS.includes(me.c) ? me.c : 'tora' })],
+    ['EXPIRE', K.iv(b.to), INV_TTL],
+  ]);
   return { ok: true };
 };
 
