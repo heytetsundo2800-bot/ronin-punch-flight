@@ -7,10 +7,18 @@ const out = path.join(root, 'public');
 fs.mkdirSync(out, { recursive: true });
 const dev = process.argv.includes('--dev');
 const ver = Date.now().toString(36);
+// v1.8：鉄人さんが Suno で作った曲は bgm_private/ に置く（公開の GitHub には入れない）。
+//   あればそれを使い、ループの位置も bgm_private/loops.json から。なければ web/ のコードで作った曲（ループは audio.js の計算）
+const priv = path.join(root, 'bgm_private');
+const usePriv = fs.existsSync(path.join(priv, 'loops.json'));
+const bgmDir = usePriv ? priv : path.join(root, 'web');
+const bgmLoops = usePriv ? JSON.parse(fs.readFileSync(path.join(priv, 'loops.json'), 'utf8')) : null;
+if (bgmLoops) for (const k of ['lobby', 'battle']) if (!bgmLoops[k] || !(bgmLoops[k].end > bgmLoops[k].start)) throw new Error('bgm_private/loops.json：' + k + ' のループがおかしい');
 // 曲のファイルが変わったときだけ、曲を読みなおす（版の番号＝中身のハッシュ）
 import crypto from 'crypto';
 const mh = crypto.createHash('sha1');
-for (const f of fs.readdirSync(path.join(root, 'web')).filter((f) => f.endsWith('.m4a') || f.endsWith('.mp3')).sort()) mh.update(fs.readFileSync(path.join(root, 'web', f)));
+for (const f of fs.readdirSync(bgmDir).filter((f) => f.endsWith('.m4a') || f.endsWith('.mp3')).sort()) mh.update(fs.readFileSync(path.join(bgmDir, f)));
+if (bgmLoops) mh.update(JSON.stringify(bgmLoops));
 const mver = mh.digest('hex').slice(0, 8);
 const origin = process.env.ORIGIN || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + process.env.VERCEL_PROJECT_PRODUCTION_URL : 'https://ronin-punch-flight.vercel.app');
 
@@ -23,7 +31,7 @@ await esbuild.build({
   outfile: path.join(out, 'app.js'),
   legalComments: 'none',
   logLevel: 'warning',
-  define: { 'process.env.NODE_ENV': '"production"', __MVER__: JSON.stringify(mver) },
+  define: { 'process.env.NODE_ENV': '"production"', __MVER__: JSON.stringify(mver), __BGM_LOOPS__: JSON.stringify(bgmLoops ? { lobby: bgmLoops.lobby, battle: bgmLoops.battle } : null) },
 });
 let html = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
 html = html.replaceAll('__VER__', ver).replaceAll('__ORIGIN__', origin);
@@ -53,5 +61,6 @@ for (const f of fs.readdirSync(path.join(root, 'web'))) {
   if (fs.statSync(path.join(root, 'web', f)).isDirectory()) continue;
   fs.copyFileSync(path.join(root, 'web', f), path.join(out, f));
 }
+if (usePriv) for (const f of ['bgm_lobby.m4a', 'bgm_lobby.mp3', 'bgm_battle.m4a', 'bgm_battle.mp3']) fs.copyFileSync(path.join(priv, f), path.join(out, f));
 const sz = (f) => (fs.statSync(path.join(out, f)).size / 1024).toFixed(0) + 'KB';
-console.log('built', ver, 'app.js', sz('app.js'), 'app.css', sz('app.css'));
+console.log('built', ver, 'app.js', sz('app.js'), 'app.css', sz('app.css'), usePriv ? 'BGM: Suno（bgm_private）' : 'BGM: コードで作った曲（web）');

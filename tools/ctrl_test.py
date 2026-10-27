@@ -206,7 +206,12 @@ async def main():
         s11 = await st()
         await ev({'type': 'uturn'})
         await pg.wait_for_timeout(450)
-        s12 = await st()
+        # 遅い環境ではゲームの時間がゆっくり進むので、反転が終わるまで待つ（最大2秒）
+        for _ in range(20):
+            s12 = await st()
+            if s12['state'] != 'uturn':
+                break
+            await pg.wait_for_timeout(100)
         dy = (s12['yaw'] - s11['yaw'] + 3.14159) % 6.28318 - 3.14159
         check('B uturn -> 180 degrees', abs(abs(dy) - 3.14159) < 0.12, round(dy, 3))
         await put(0, 50, -40)

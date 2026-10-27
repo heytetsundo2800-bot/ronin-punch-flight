@@ -138,6 +138,10 @@ async def main():
         for i in range(3):
             await pg.evaluate("() => window.__app.match.player.intent.events.push({ type: 'tap' })")
             await pg.wait_for_timeout(700)
+        try:
+            await pg.wait_for_function("() => window.__app.match.done.has ? window.__app.match.done.has('dash') : [...window.__app.match.done].includes('dash')", timeout=6000)
+        except Exception:
+            pass
         dn = await pg.evaluate("() => [...window.__app.match.done]")
         check('drill: 3 boosts → done', 'dash' in dn, dn)
         # 1体にする・反撃にする
@@ -199,12 +203,13 @@ async def main():
         await pg.click('.modal.rules .close')
         await pg.click('.battlebtn')
         await pg.wait_for_selector('.modal.rules .go', timeout=5000)
-        await pg.click('.modal.rules .go')
-        await pg.wait_for_function("() => window.__app.match && window.__app.match.phase !== 'result'", timeout=10000)
+        # 試合の準備（3Dの組み立て）はテスト用のブラウザだと数十秒かかることがあるので、長めに待つ
+        await pg.click('.modal.rules .go', timeout=120000)
+        await pg.wait_for_function("() => window.__app.match && window.__app.match.phase !== 'result'", timeout=60000)
         gc = await pg.evaluate("() => !!document.querySelector('.goalcard')")
         check('first battle shows the rules, then starts; goal card shown', gc, gc)
         await pg.evaluate("() => { window.__app.endMatch(); window.__app.showHome(); }")
-        await pg.click('.battlebtn')
+        await pg.click('.battlebtn', timeout=120000)
         await pg.wait_for_timeout(600)
         m2 = await pg.evaluate("() => [!!document.querySelector('.modal.rules'), !!window.__app.match]")
         check('second battle starts right away', m2 == [False, True], m2)

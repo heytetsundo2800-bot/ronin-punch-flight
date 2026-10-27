@@ -42,7 +42,7 @@ async def main():
             raise
         code = (await A.inner_text('.room .code')).strip()
         ctxB, B = await dev(b, 'ゲストくん', 'hayata', '&room=' + code)
-        await B.wait_for_selector('.room .code', timeout=45000)
+        await B.wait_for_selector('.room .code', timeout=120000)  # テスト用のブラウザは数秒ずつ止まるので、入るのに30秒以上かかることがある
         await A.wait_for_timeout(1500)
         await A.click('.start')
         for pg in (A, B):

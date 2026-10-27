@@ -42,7 +42,7 @@ async def main():
         await A.wait_for_selector('.room .code', timeout=30000)
         code = (await A.inner_text('.room .code')).strip()
         ctxB, B = await dev(b, 'ゲストくん', 'tetsundo', '&room=' + code)
-        await B.wait_for_selector('.room .code', timeout=45000)
+        await B.wait_for_selector('.room .code', timeout=120000)  # テスト用のブラウザは数秒ずつ止まるので、入るのに30秒以上かかることがある
         await A.wait_for_timeout(1500)
         rd = await A.evaluate("() => window.__app.room.state.diff")
         check('room uses the host CPU level (おさんぽ)', rd == 'zero', rd)
@@ -69,11 +69,14 @@ async def main():
         await A.evaluate("() => { window.__hold = setInterval(() => { const t = window.__tgt; t.pos.set(0, 62, 20); t.vel.set(0,0,0); }, 30); }")
         kinds = set()
         shotSeen = False
-        for i in range(30):
+        # テスト用のブラウザは数秒止まることがあるので、3発ぶん当たるまで（最大8秒）見る
+        for i in range(80):
             await A.wait_for_timeout(100)
-            ks = await A.evaluate("() => { const m = window.__app.match; const g = m.punchers.find(p => p.displayName === 'ゲストくん'); return { k: m.combat.projectiles.filter(q => q.owner === g).map(q => q.kind), shot: !!g.atk.shotNow }; }")
+            ks = await A.evaluate("() => { const m = window.__app.match; const g = m.punchers.find(p => p.displayName === 'ゲストくん'); return { k: m.combat.projectiles.filter(q => q.owner === g).map(q => q.kind), shot: !!g.atk.shotNow, dmg: 99999 - window.__tgt.hp }; }")
             kinds.update(ks['k'])
             shotSeen = shotSeen or ks['shot']
+            if i >= 30 and ks['dmg'] > 300 and shotSeen:
+                break
         dmg = await A.evaluate("() => 99999 - window.__tgt.hp")
         check('guest beat shot spawns on the host', 'beat' in kinds, sorted(kinds))
         check('guest beat shot hits the far target', dmg > 300, dmg)

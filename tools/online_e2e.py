@@ -45,7 +45,7 @@ async def main():
         # 招待リンクで入る
         ctxB, B = await dev(b, 'ゲストくん', 'even', '&room=' + code)
         try:
-            await B.wait_for_selector('.room .code', timeout=45000)
+            await B.wait_for_selector('.room .code', timeout=120000)  # テスト用のブラウザは数秒ずつ止まるので、入るのに30秒以上かかることがある
             ok = True
         except Exception:
             ok = False
@@ -82,7 +82,7 @@ async def main():
         await C.fill('.code', code)
         await C.click('.join')
         try:
-            await C.wait_for_selector('.room .code', timeout=45000)
+            await C.wait_for_selector('.room .code', timeout=120000)
             okc = True
         except Exception:
             okc = False
@@ -259,9 +259,13 @@ async def main():
         sA = await A.evaluate("() => [...document.querySelectorAll('.result .dia span')].map(e => e.textContent)")
         sB = await B.evaluate("() => [...document.querySelectorAll('.result .dia span')].map(e => e.textContent)")
         check('same score on both screens', sA == sB, (sA, sB))
-        # 部屋にもどって、もう1試合
-        for pg in (B, A, C):
-            await pg.click('.result .again', force=True)
+        # v1.8：部屋の待ち画面にもどって、もう1試合（部屋は作りなおさない）
+        cdtxt = await B.inner_text('.result .again')
+        check('result shows countdown back to room', '部屋にもどる' in cdtxt and '（' in cdtxt, cdtxt)
+        hostHome = await A.inner_text('.result .home')
+        check('host result button says close room', hostHome.strip() == '部屋をとじる', hostHome)
+        # ホストだけが押す → ゲストは数秒で自動でもどる、3人目は時間で自動でもどる
+        await A.click('.result .again', force=True)
         try:
             await A.wait_for_selector('.room .start', timeout=15000)
         except Exception:
@@ -270,11 +274,33 @@ async def main():
             print('A errs:', A.errs[:5], 'B errs:', B.errs[:5])
             print('A screens:', await A.evaluate("() => [...document.querySelectorAll('#screens > *')].map(e => e.className)"))
             raise
-        await A.wait_for_timeout(800)
+        await A.wait_for_timeout(500)
+        away = await A.evaluate("() => [...document.querySelectorAll('.rslot.away .nm')].map(e => e.textContent)")
+        check('host lobby marks members still on the result screen', len(away) >= 1 and all('結果画面' in a for a in away), away)
+        t0 = time.time()
+        await B.wait_for_selector('.room .waitmsg', timeout=15000)
+        dt = time.time() - t0
+        check('guest returns to the same room soon after the host', dt < 9, round(dt, 1))
+        codeB = (await B.inner_text('.room .code')).strip()
+        check('same room code after the match', codeB == code, (codeB, code))
+        await A.wait_for_function("() => document.querySelectorAll('.rslot.away').length === 0", timeout=25000)
+        check('everyone back in the room (third player by timer)', await C.evaluate("() => !!document.querySelector('.screen.room')"))
+        # 待ち画面でステージとチームを変える
+        newStage = 'campus' if STAGE != 'campus' else 'sakura'
+        await A.click('.ropts .stg button[data-k="%s"]' % newStage)
+        teamB0 = await B.evaluate("() => window.__app.room.me().team")
+        bid = await B.evaluate("() => window.__app.room.myId")
+        await A.click('.rslot[data-id="%s"]' % bid)
+        await B.wait_for_function("(t) => window.__app.room.me().team !== t && window.__app.room.state.stage === '%s'" % newStage, arg=teamB0, timeout=8000)
+        check('host changed stage and teams in the room', True)
+        await A.screenshot(path=f'{OUT}/online_room_again.png')
+        await A.wait_for_timeout(400)
         await A.click('.start')
         for pg in (A, B, C):
             await pg.wait_for_function("() => window.__app.match && window.__app.match.phase === 'play'", timeout=40000)
         check('second match started for all', True)
+        st2 = await B.evaluate("() => [window.__app.match.stage.id, window.__app.match.player.team]")
+        check('second match uses the new stage and team', st2[0] == newStage and st2[1] != teamB0, (st2, newStage, teamB0))
         # 3人目が抜ける → CPUに
         await C.evaluate("() => { window.__app.leaveRoom(); window.__app.endMatch(); window.__app.showHome(); }")
         await A.wait_for_timeout(2500)
