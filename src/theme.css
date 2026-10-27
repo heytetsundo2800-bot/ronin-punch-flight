@@ -4008,3 +4008,156 @@ button {
     opacity: 1;
   }
 }
+
+/* ===== v1.8.1 ホームのフレンドの欄（だれがオンライン・オフラインか）===== */
+.homefr {
+  position: absolute;
+  left: calc(var(--sal) + 12px);
+  top: calc(var(--sat) + 70px);
+  width: min(calc(100vw - min(58vw, 236px) - 36px - var(--sal) - var(--sar)), 170px);
+  clip-path: var(--cut);
+  background: linear-gradient(180deg, rgba(14, 22, 44, 0.9), rgba(6, 10, 22, 0.86));
+  box-shadow: inset 0 0 0 1px var(--hair), inset 0 2px 0 rgba(46, 232, 122, 0.6);
+  padding: 6px 8px 6px;
+  cursor: pointer;
+  z-index: 2;
+  -webkit-tap-highlight-color: transparent;
+}
+.homefr[hidden] {
+  display: none;
+}
+.homefr:active {
+  background: linear-gradient(180deg, rgba(24, 40, 70, 0.94), rgba(10, 18, 36, 0.9));
+}
+.homefr .hd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #fff;
+  margin-bottom: 3px;
+  white-space: nowrap;
+}
+.homefr .hd .ico {
+  width: 15px;
+  height: 15px;
+  color: #5dffa0;
+  filter: drop-shadow(0 0 5px rgba(46, 232, 122, 0.7));
+}
+.homefr .hd .cnt {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--fd);
+  font-size: 11px;
+  color: var(--muted);
+}
+.homefr .hd .cnt i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4a5470;
+}
+.homefr .hd .cnt.lit {
+  color: #5dffa0;
+}
+.homefr .hd .cnt.lit i {
+  background: #2ee87a;
+  box-shadow: 0 0 6px #2ee87a;
+}
+.homefr .frow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.homefr .frow.off {
+  opacity: 0.55;
+}
+.frow .av {
+  position: relative;
+  flex: none;
+  display: block;
+  line-height: 0;
+}
+.homefr .frow img {
+  width: 26px;
+  height: 26px;
+  clip-path: var(--cut-s);
+  background: rgba(255, 255, 255, 0.07);
+}
+.frow .sd {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4a5470;
+  box-shadow: 0 0 0 2px #0a1024;
+}
+.frow.menu .sd {
+  background: #2ee87a;
+  box-shadow: 0 0 0 2px #0a1024, 0 0 6px #2ee87a;
+}
+.frow.room .sd {
+  background: #3bc4ff;
+  box-shadow: 0 0 0 2px #0a1024, 0 0 6px #3bc4ff;
+}
+.frow.match .sd {
+  background: #ff9d2e;
+  box-shadow: 0 0 0 2px #0a1024, 0 0 6px #ff9d2e;
+}
+.homefr .frow .nm {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.homefr .frow .nm .fst {
+  display: block;
+  margin: 1px 0 0;
+  font-size: 9.5px;
+}
+.homefr .frow .nm .fst::before {
+  display: none;
+}
+.homefr .more {
+  font-size: 10px;
+  color: var(--cyan2);
+  text-align: right;
+  padding-top: 3px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.homefr .none {
+  margin: 2px 0 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.homefr .addf {
+  display: block;
+  width: 100%;
+  height: 28px;
+  font-size: 11px;
+  clip-path: var(--cut-s);
+  background: rgba(46, 232, 122, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(46, 232, 122, 0.6);
+  color: #eafff2;
+}
+.modal.frlist .frow .av img {
+  display: block;
+}
+/* 小さい画面：ようすの文字はかくして、顔の点だけ */
+@media (max-width: 359px), (max-height: 600px) {
+  .homefr .frow .nm .fst {
+    display: none;
+  }
+  .homefr {
+    top: calc(var(--sat) + 64px);
+  }
+}

@@ -1014,7 +1014,7 @@ class App {
       this._noStoreWarned = true;
       setTimeout(() => this.toast('この端末は記録を保存できない設定です（プライベートブラウズなど）。閉じると記録が消えます', 4500), 800);
     }
-    net.friends().then((f) => (this.friendList = f)).catch(() => {});
+    this.loadHomeFriends();
     this.setLobbyChar(this.save.char);
     this.lobby.pose = 'ground';
     const S = this.save;
@@ -1029,6 +1029,7 @@ class App {
          <button class="iconbtn help" aria-label="遊び方">${ICON.help}</button>
          <button class="iconbtn share" aria-label="友だちに送る">${ICON.share}</button>
        </div>
+       <div class="homefr" hidden></div>
        <div class="modecard">
          <div class="hd"><b>REGULAR</b><button class="rulebtn" aria-label="ルールと勝ち方">${ICON.book}<span>ルール</span></button></div>
          <div class="rule"><button class="prev" aria-label="前のルール">${ICON.back}</button><div class="nm"></div><button class="next" aria-label="次のルール">${ICON.next}</button></div>
@@ -1110,7 +1111,7 @@ class App {
     $('.share', s).onclick = () => this.share();
     // キャラをタップすると身ぶり（エモート）で応える
     s.addEventListener('click', (e) => {
-      if (e.target.closest('button, .modecard, .topbar, .tabs')) return;
+      if (e.target.closest('button, .modecard, .topbar, .tabs, .homefr')) return;
       if (!this.hitLobbyChar(e.clientX, e.clientY)) return;
       this.lobbyEmote();
       this.lobby.nextEmote = 9;
@@ -1505,12 +1506,15 @@ class App {
     const sc = this.screenEl.querySelector('.screen');
     if (!sc) return false;
     if (sc.classList.contains('room') || sc.querySelector('.fcard')) return true;
-    if (sc.classList.contains('home')) return n % 2 === 1;
+    if (sc.classList.contains('home')) return n % 2 === 1 || !net.fonT || Date.now() - net.fonT > 20000;
     return false;
   }
   onPresence() {
     this.updateOnlineBits();
     if (this._finvRender) this._finvRender();
+    if (this._frlRender) this._frlRender();
+    // アカウントがあとからできたときなど、まだフレンドを読んでいなければ読む
+    if (!this.friendListOk && net.acct && this.screenEl.querySelector('.home .homefr')) this.loadHomeFriends();
   }
   // ホームの「オンライン対戦」・部屋の「フレンドを招待」・フレンドのタブの点
   updateOnlineBits() {
@@ -1528,6 +1532,87 @@ class App {
       d.className = 'fst ' + (st || 'off');
       d.textContent = FRIEND_STATE[st || 'off'];
     });
+    this.renderHomeFriends();
+  }
+  // ===== v1.8.1：ホームのフレンドの欄（だれがオンライン・オフラインか）=====
+  async loadHomeFriends() {
+    try {
+      if (net.ready === null) await net.ping();
+      const f = await net.friends();
+      this.friendList = f;
+      this.friendListOk = !!(net.ready && net.acct);
+    } catch (e) {}
+    this._homeFrSig = null;
+    this.renderHomeFriends();
+  }
+  // フレンドを、オンライン → 部屋にいる → 対戦中 → オフライン の順に
+  friendRows() {
+    const order = { menu: 0, room: 1, match: 2, off: 3 };
+    return (this.friendList || [])
+      .map((f) => ({ ...f, st: net.friendState(f.u) || 'off' }))
+      .sort((a, b) => order[a.st] - order[b.st] || a.n.localeCompare(b.n, 'ja'));
+  }
+  friendRowHtml(f) {
+    return `<div class="frow ${f.st}"><span class="av"><img alt="" ${this.porImg(PUNCHERS[f.c] ? f.c : 'tora', 0)}><i class="sd"></i></span><span class="nm">${escapeHtml(f.n)}<small class="fst ${f.st}">${FRIEND_STATE[f.st]}</small></span></div>`;
+  }
+  renderHomeFriends() {
+    const box = this.screenEl.querySelector('.home .homefr');
+    if (!box) return;
+    // アカウントがない・サーバーにつながらないときは出さない
+    if (!net.acct || !this.friendListOk) {
+      box.hidden = true;
+      return;
+    }
+    const rows = this.friendRows();
+    const on = rows.filter((f) => f.st !== 'off').length;
+    // 画面の高さで、出す人数を決める（多いときは「ほか N人」）
+    const max = innerHeight < 700 ? 3 : innerHeight < 800 ? 4 : 5;
+    const shown = rows.length > max ? rows.slice(0, max - 1) : rows;
+    const rest = rows.length - shown.length;
+    const sig = rows.map((f) => f.u + f.st + f.n + f.c).join('|') + '#' + max;
+    if (sig === this._homeFrSig && !box.hidden) return;
+    this._homeFrSig = sig;
+    box.hidden = false;
+    const cnt = rows.length ? `<span class="cnt${on ? ' lit' : ''}" aria-label="オンライン ${on}人"><i></i>${on}人</span>` : '';
+    box.innerHTML =
+      `<div class="hd">${ICON.friend}<b>フレンド</b>${cnt}</div>` +
+      (rows.length
+        ? `<div class="frs">${shown.map((f) => this.friendRowHtml(f)).join('')}</div>` + (rest > 0 ? `<div class="more">ほか ${rest}人 ›</div>` : '')
+        : `<p class="none">まだいません</p><button class="addf">フレンドを追加</button>`);
+    this.fillImgs(box);
+    box.onclick = (e) => {
+      sound.play('ui');
+      if (e.target.closest('.addf')) return this.showRanking('f');
+      this.showFriendList();
+    };
+  }
+  // ホームの欄を押すと：フレンド全員のようす
+  showFriendList() {
+    if (this.root.querySelector('.modal.frlist')) return;
+    const m = el('div', 'modal finvm frlist', `<div class="box"><h3>フレンド</h3><div class="flist"></div><p class="note">部屋にいる＝オンライン対戦の部屋で待っている。対戦中＝試合や練習をしている。少しおくれて変わることがあります。</p><div class="btns"><button class="btn y addf">フレンドを追加・コードを送る</button><button class="btn k close">とじる</button></div></div>`);
+    this.root.appendChild(m);
+    const close = () => {
+      m.remove();
+      this._frlRender = null;
+    };
+    $('.close', m).onclick = close;
+    $('.addf', m).onclick = () => {
+      close();
+      this.showRanking('f');
+    };
+    m.onclick = (e) => {
+      if (e.target === m) close();
+    };
+    const list = $('.flist', m);
+    const render = () => {
+      if (!m.isConnected) return;
+      const rows = this.friendRows();
+      list.innerHTML = rows.length ? rows.map((f) => this.friendRowHtml(f)).join('') : '<p>まだフレンドがいません。</p><p class="note">「フレンドを追加」で、フレンドコードを送るか、友だちのコードを入れてね。</p>';
+      this.fillImgs(list);
+    };
+    this._frlRender = render;
+    render();
+    net.pokePresence();
   }
   // 部屋に入っているとき：フレンドの一覧から招待を送る
   async showInviteFriends() {
