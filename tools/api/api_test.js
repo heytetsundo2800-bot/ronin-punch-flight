@@ -633,6 +633,78 @@ async function main() {
     });
 
     // ---------------------------------------------------------------
+    console.log('\n[presence and invites (v1.8)]');
+    const P1 = dev(), P2 = dev(), P3 = dev();
+    let room1 = '';
+    await test('presence: hb needs auth; marks me online with a short TTL', async () => {
+      ok(await P1.register('オンA', 'even'));
+      ok(await P2.register('オンB'));
+      ok(await P3.register('オンC'));
+      ok(await P1.call('fadd', { fc: P2.acct.fc }));
+      err(await P1.call('hb', { s: 'menu' }, { anon: true }), 401, 'auth');
+      const r = ok(await P1.call('hb', { s: 'menu' }));
+      eq(r.inv, []);
+      eq(r.fr, undefined, 'no friend list unless asked');
+      eq(JSON.parse(F('GET', 'rpf:on:' + P1.acct.uid)).s, 'menu');
+      const ttl = F('TTL', 'rpf:on:' + P1.acct.uid);
+      assert(ttl > 30 && ttl <= 40, 'menu ttl ' + ttl);
+      ok(await P1.call('hb', { s: 'match' }));
+      const ttl2 = F('TTL', 'rpf:on:' + P1.acct.uid);
+      assert(ttl2 > 90 && ttl2 <= 100, 'match ttl ' + ttl2);
+      ok(await P1.call('hb', { s: 'weird' }));
+      eq(JSON.parse(F('GET', 'rpf:on:' + P1.acct.uid)).s, 'menu', 'unknown state → menu');
+    });
+    await test('presence: friends see only friends who are online (no room codes)', async () => {
+      const a = ok(await P2.call('hb', { s: 'room', f: 1 }));
+      eq(a.fr, [{ u: P1.acct.uid, s: 'menu' }]);
+      const b = ok(await P1.call('hb', { s: 'menu', f: 1 }));
+      eq(b.fr, [{ u: P2.acct.uid, s: 'room' }]);
+      const c = ok(await P3.call('hb', { s: 'menu', f: 1 }));
+      eq(c.fr, [], 'not friends → nothing');
+      F('DEL', 'rpf:on:' + P1.acct.uid);
+      eq(ok(await P2.call('hb', { s: 'room', f: 1 })).fr, [], 'expired → offline');
+      ok(await P1.call('hb', { s: 'menu' }));
+    });
+    await test('invite: friends only, room must exist, rate limited', async () => {
+      const mk = ok(await P2.call('rmk', { n: 'オンB' }, { anon: true }));
+      room1 = mk.code;
+      err(await P2.call('inv', { to: P1.acct.uid, r: room1 }, { anon: true }), 401, 'auth');
+      err(await P2.call('inv', { to: P3.acct.uid, r: room1 }), 403, 'notfriend');
+      err(await P2.call('inv', { to: P2.acct.uid, r: room1 }), 400, 'self');
+      err(await P2.call('inv', { to: P1.acct.uid, r: '99999' === room1 ? '99998' : '99999' }), 404, 'nf');
+      err(await P2.call('inv', { to: 'NOT VALID', r: room1 }), 400, 'bad');
+      err(await P2.call('inv', { to: P1.acct.uid, r: '12' }), 400, 'bad');
+      ok(await P2.call('inv', { to: P1.acct.uid, r: room1 }));
+      ok(await P2.call('inv', { to: P1.acct.uid, r: room1 }), 'again (replaces)');
+      const ttl = F('TTL', 'rpf:iv:' + P1.acct.uid);
+      assert(ttl > 100 && ttl <= 120, 'invite ttl ' + ttl);
+    });
+    await test('invite: delivered once with the sender name and room, then gone', async () => {
+      const r = ok(await P1.call('hb', { s: 'menu' }));
+      eq(r.inv.map((i) => [i.u, i.n, i.c, i.r]), [[P2.acct.uid, 'オンB', 'tora', room1]]);
+      eq(F('EXISTS', 'rpf:iv:' + P1.acct.uid), 0, 'taken');
+      eq(ok(await P1.call('hb', { s: 'menu' })).inv, []);
+    });
+    await test('invite: old or broken entries are skipped', async () => {
+      F('HSET', 'rpf:iv:' + P1.acct.uid, P2.acct.uid, JSON.stringify({ r: room1, t: Date.now() - 10 * 60 * 1000, n: 'x', c: 'tora' }));
+      F('HSET', 'rpf:iv:' + P1.acct.uid, 'bad uid!', JSON.stringify({ r: room1, t: Date.now(), n: 'x', c: 'tora' }));
+      F('HSET', 'rpf:iv:' + P1.acct.uid, 'zz00000001', 'not json');
+      eq(ok(await P1.call('hb', { s: 'menu' })).inv, []);
+    });
+    await test('invite limit: 20 per 10 minutes → 429', async () => {
+      F('DEL', 'rpf:rl:iv:' + P2.acct.uid);
+      for (let i = 0; i < 20; i++) ok(await P2.call('inv', { to: P1.acct.uid, r: room1 }), 'invite ' + (i + 1));
+      err(await P2.call('inv', { to: P1.acct.uid, r: room1 }), 429, 'rl');
+      F('DEL', 'rpf:iv:' + P1.acct.uid);
+    });
+    await test('unfriend removes pending invites both ways', async () => {
+      F('HSET', 'rpf:iv:' + P1.acct.uid, P2.acct.uid, JSON.stringify({ r: room1, t: Date.now(), n: 'オンB', c: 'tora' }));
+      F('HSET', 'rpf:iv:' + P2.acct.uid, P1.acct.uid, JSON.stringify({ r: room1, t: Date.now(), n: 'オンA', c: 'even' }));
+      ok(await P1.call('fdel', { uid: P2.acct.uid }));
+      eq([F('HEXISTS', 'rpf:iv:' + P1.acct.uid, P2.acct.uid), F('HEXISTS', 'rpf:iv:' + P2.acct.uid, P1.acct.uid)], [0, 0]);
+    });
+
+    // ---------------------------------------------------------------
     console.log('\n[transfer code]');
     const T1 = dev();
     let code1;
@@ -797,6 +869,11 @@ async function main() {
       ok(await X.call('report', { text: 'けすまえの報告', info: { v: 1 } }));
       ok(await Y.call('report', { text: 'のこる報告' }));
       xCode = ok(await X.issueCode()).code;
+      // v1.8：オンラインのしるしと、Y あての招待（X から）・X あての招待（Y から）
+      ok(await X.call('hb', { s: 'menu' }));
+      const rm = ok(await X.call('rmk', { n: 'けすひと' }, { anon: true }));
+      ok(await X.call('inv', { to: Y.acct.uid, r: rm.code }));
+      ok(await Y.call('inv', { to: X.acct.uid, r: rm.code }));
       F('SET', 'kr:u:' + X.acct.uid, 'other-app');
       F('HSET', 'kr:pub', X.acct.uid, 'other-app');
       assert(refsTo(X.acct.uid).length >= 8, 'setup made references: ' + refsTo(X.acct.uid));
