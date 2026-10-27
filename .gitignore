@@ -5,3 +5,4 @@ public/
 .DS_Store
 tools/test/*.bundle.js
 tools/assets/*.bundle.js
+bgm_private/
